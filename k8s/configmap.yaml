@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ccg-config
+  namespace: cloud-cost-guardian
+data:
+  NODE_ENV: production
+  PORT: "3000"
+  LOG_JSON: "true"
+  SWAGGER_ENABLED: "false"
+  CORS_ORIGINS: https://app.cloudcostguardian.example
+  DATABASE_SSL: "true"
+  DATABASE_POOL_SIZE: "10"
+  JWT_ACCESS_TTL: 15m
+  JWT_REFRESH_TTL: 7d
+  AWS_REGION: us-east-1
+  AWS_PLATFORM_ACCOUNT_ID: "123456789012"
+  AWS_ASSUME_ROLE_DURATION_SECONDS: "3600"
+  AWS_MAX_ATTEMPTS: "6"
+  PUBLIC_API_URL: https://api.cloudcostguardian.example
+  K8S_AGENT_IMAGE: ghcr.io/your-org/ccg-k8s-agent:0.1.0
+  K8S_AGENT_HELM_CHART: oci://ghcr.io/your-org/charts/ccg-k8s-agent
+  CFN_TEMPLATE_URL: https://ccg-public.s3.amazonaws.com/cloudformation/readonly-role.json

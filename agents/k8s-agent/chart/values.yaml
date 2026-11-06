@@ -1,0 +1,12 @@
+clusterId: ""
+clusterName: ""
+apiUrl: ""
+agentToken: ""
+image: ghcr.io/your-org/ccg-k8s-agent:0.1.0
+intervalSeconds: 300
+resources:
+  requests:
+    cpu: 20m
+    memory: 32Mi
+  limits:
+    memory: 128Mi
