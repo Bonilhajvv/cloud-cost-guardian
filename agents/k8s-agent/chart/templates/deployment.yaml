@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ccg-agent
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: ccg-agent
+    ccg.io/install-method: helm
+    ccg.io/cluster: {{ .Values.clusterName | quote }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ccg-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ccg-agent
+        ccg.io/install-method: helm
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: ccg-agent
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: agent
+          image: {{ .Values.image | quote }}
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef:
+                name: ccg-agent-credentials
+          env:
+            - name: CCG_INSTALL_METHOD
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['ccg.io/install-method']
+          ports:
+            - name: health
+              containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

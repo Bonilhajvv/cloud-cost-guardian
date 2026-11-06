@@ -1,0 +1,7 @@
+export type AwsErrorCode =
+  | 'ACCESS_DENIED'
+  | 'NOT_ENROLLED'
+  | 'THROTTLED'
+  | 'INVALID_CONFIGURATION'
+  | 'DATA_UNAVAILABLE'
+  | 'UNKNOWN';

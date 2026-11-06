@@ -1,0 +1,6 @@
+apiVersion: v2
+name: ccg-k8s-agent
+description: Cloud Cost Guardian read-only Kubernetes agent
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
