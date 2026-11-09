@@ -12,7 +12,7 @@ import { AwsAccountRef } from '../core/interfaces/aws-account-ref.interface';
 import { AwsClientFactory } from '../core/aws-client.factory';
 import { toAwsIntegrationError } from '../core/errors/aws-integration.error';
 import { Ec2InstanceDetails, InstanceTypeSpec } from './interfaces/ec2-instance.interface';
-import { isString, normalizeInstance } from './helpers/normalize-instance.helper';
+import { countAccelerators, isString, normalizeInstance } from './helpers/normalize-instance.helper';
 
 @Injectable()
 export class Ec2Service {
@@ -85,6 +85,8 @@ export class Ec2Service {
               vcpu,
               memoryGiB: memMiB / 1024,
               architectures: t.ProcessorInfo?.SupportedArchitectures ?? [],
+              accelerators: countAccelerators(t),
+              localStorageGb: t.InstanceStorageInfo?.TotalSizeInGB ?? 0,
             });
           }
         }

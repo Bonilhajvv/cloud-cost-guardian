@@ -9,6 +9,7 @@ import { KubernetesUsageSample } from './entities/kubernetes-usage-sample.entity
 import { NodeMemoryStats } from './interfaces/kubernetes.interface';
 import { KubernetesClusterStatus } from '../common/enums';
 import { CLUSTER_STALE_AFTER_MS, GIB, NODE_STATS_DAYS, USAGE_SAMPLE_RETENTION_DAYS } from './constants/kubernetes.constant';
+import { KubernetesNodeRef } from '../aws/ec2/interfaces/ec2-analysis.interface';
 
 @Injectable()
 export class KubernetesMetricsService {
@@ -17,6 +18,12 @@ export class KubernetesMetricsService {
     @InjectRepository(KubernetesNode) private readonly nodes: Repository<KubernetesNode>,
     @InjectRepository(KubernetesCluster) private readonly clusters: Repository<KubernetesCluster>,
   ) {}
+
+  async nodesByInstanceIds(organizationId: string, instanceIds: string[]): Promise<Map<string, KubernetesNodeRef>> {
+    if (instanceIds.length === 0) return new Map();
+    const nodes = await this.nodes.find({ where: { organizationId, instanceId: In(instanceIds) }, relations: { cluster: true } });
+    return new Map(nodes.flatMap((n) => (n.instanceId ? [[n.instanceId, { clusterName: n.cluster.name, nodeName: n.nodeName }] as const] : [])));
+  }
 
   async nodeMemoryStats(organizationId: string, instanceIds: string[]): Promise<Map<string, NodeMemoryStats>> {
     const out = new Map<string, NodeMemoryStats>();

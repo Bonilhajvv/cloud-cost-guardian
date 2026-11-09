@@ -3,7 +3,7 @@ import { MEMORY_UNAVAILABLE } from '../metrics/interfaces/utilization-metrics.in
 import { Ec2UtilizationMetrics } from '../metrics/interfaces/utilization-metrics.interface';
 import { Ec2OptimizerRecommendation } from '../optimizer/interfaces/ec2-optimizer.interface';
 import { Ec2AnalyzerService } from './ec2-analyzer.service';
-import { downsizeCandidateType } from './helpers/downsize-candidate.helper';
+import { downsizeCandidateType, upsizeCandidateType } from './helpers/downsize-candidate.helper';
 import { mapPerformanceRisk } from './helpers/risk-level.helper';
 import { Ec2AnalyzerInput } from './interfaces/ec2-analysis.interface';
 import { Ec2InstanceDetails, InstanceTypeSpec } from './interfaces/ec2-instance.interface';
@@ -19,6 +19,9 @@ function instance(overrides: Partial<Ec2InstanceDetails> = {}): Ec2InstanceDetai
     state: 'running',
     region: 'sa-east-1',
     availabilityZone: 'sa-east-1a',
+    privateIpAddress: '10.0.11.58',
+    vpcId: 'vpc-1',
+    stoppedAt: null,
     platform: 'Linux/UNIX',
     architecture: 'x86_64',
     launchTime: null,
@@ -187,6 +190,73 @@ describe('Ec2AnalyzerService', () => {
     );
 
     expect(draft).toMatchObject({ type: RecommendationType.EC2_IDLE, estimatedMonthlySavings: null, estimatedYearlySavings: null });
+  });
+
+  describe('stopped instances', () => {
+    const NOW = new Date('2026-11-17T00:00:00.000Z');
+    const stopped = (stoppedAt: string | null) => instance({ state: 'stopped', stoppedAt });
+    const volumes = [
+      { volumeId: 'vol-a', monthlyCost: 0.96 },
+      { volumeId: 'vol-b', monthlyCost: 1.2 },
+    ];
+
+    it('recommends snapshot and removal after the minimum stopped days, with attached volume cost as savings', () => {
+      const { analysis, draft } = analyzer.analyze(input({ instance: stopped('2026-11-09T14:42:28.000Z'), attachedVolumes: volumes, now: NOW }));
+
+      expect(analysis.finding).toBe('STOPPED');
+      expect(draft).toMatchObject({
+        type: RecommendationType.EC2_STOPPED,
+        source: RecommendationSource.CCG_HEURISTIC,
+        currentMonthlyCost: 2.16,
+        recommendedMonthlyCost: 0,
+        estimatedMonthlySavings: 2.16,
+        estimatedYearlySavings: 25.92,
+        targetKey: 'SNAPSHOT_AND_TERMINATE',
+        title: 'Remove stopped instance production-api: snapshot and delete 2 volume(s)',
+      });
+    });
+
+    it('keeps savings null instead of inventing 0 when no attached volume is known', () => {
+      const { draft } = analyzer.analyze(input({ instance: stopped('2026-11-01T00:00:00.000Z'), attachedVolumes: [], now: NOW }));
+
+      expect(draft).toMatchObject({ type: RecommendationType.EC2_STOPPED, estimatedMonthlySavings: null, recommendedMonthlyCost: null });
+      expect(draft?.title).toBe('Remove stopped instance production-api: snapshot and delete its volumes');
+    });
+
+    it('keeps the volume list in the analysis to measure realized savings later', () => {
+      const { analysis } = analyzer.analyze(input({ instance: stopped('2026-11-01T00:00:00.000Z'), attachedVolumes: volumes, now: NOW }));
+
+      expect(analysis.stoppedVolumes).toEqual(volumes);
+    });
+
+    it('keeps savings null when a volume cost is unknown', () => {
+      const { draft } = analyzer.analyze(
+        input({ instance: stopped('2026-11-01T00:00:00.000Z'), attachedVolumes: [{ volumeId: 'vol-a', monthlyCost: null }], now: NOW }),
+      );
+
+      expect(draft).toMatchObject({ type: RecommendationType.EC2_STOPPED, estimatedMonthlySavings: null, currentMonthlyCost: null });
+    });
+
+    it('warns about a ghost Kubernetes node without acting on it', () => {
+      const { draft } = analyzer.analyze(
+        input({
+          instance: stopped('2026-11-01T00:00:00.000Z'),
+          attachedVolumes: volumes,
+          kubernetesNode: { clusterName: 'tismoo-prd', nodeName: 'ip-10-0-11-177' },
+          now: NOW,
+        }),
+      );
+
+      expect(draft?.description).toContain('Node ip-10-0-11-177 is still registered in cluster tismoo-prd: remove it with kubectl delete node ip-10-0-11-177');
+    });
+
+    it('stays NOT_RUNNING when stopped recently or when the stop date is unknown', () => {
+      for (const stoppedAt of ['2026-11-14T00:00:00.000Z', null]) {
+        const { analysis, draft } = analyzer.analyze(input({ instance: stopped(stoppedAt), attachedVolumes: volumes, now: NOW }));
+        expect(analysis.finding).toBe('NOT_RUNNING');
+        expect(draft).toBeNull();
+      }
+    });
   });
 
   it('does not analyze stopped instances', () => {
@@ -391,6 +461,172 @@ describe('Ec2AnalyzerService usage profile and options', () => {
   });
 });
 
+describe('Ec2AnalyzerService special families', () => {
+  const analyzer = new Ec2AnalyzerService();
+  const gpu = (instanceType: string, vcpu: number, memoryGiB: number, accelerators: number, localStorageGb: number): InstanceTypeSpec => ({
+    instanceType, vcpu, memoryGiB, architectures: ['x86_64'], accelerators, localStorageGb,
+  });
+  const g5 = instance({ instanceType: 'g5.2xlarge', vcpu: 8, memoryGiB: 32 });
+
+  it('ignores the smaller-size heuristic and explains why', () => {
+    const { analysis, draft } = analyzer.analyze(
+      input({ instance: g5, optimizer: null, downsizeCandidate: gpu('g5.xlarge', 4, 16, 1, 250), metrics: metrics({ avg: 3, p95: 8, max: 20 }, { memP95: 10 }) }),
+    );
+
+    expect(draft).toBeNull();
+    expect(analysis.options?.some((o) => o.kind === 'DOWNSIZE')).toBe(false);
+    expect(analysis.metrics.notes.join(' ')).toContain('GPU');
+  });
+
+  it('marks options that lose GPU or local storage as DOES_NOT_FIT', () => {
+    const { analysis } = analyzer.analyze(
+      input({
+        instance: instance({ instanceType: 'g4dn.xlarge', vcpu: 4, memoryGiB: 16 }),
+        optimizer: optimizer({
+          currentInstanceType: 'g4dn.xlarge',
+          options: [
+            { instanceType: 'm6i.xlarge', rank: 1, performanceRisk: 1, estimatedMonthlySavings: 200, savingsPercentage: 50, currency: 'USD', spec: gpu('m6i.xlarge', 4, 16, 0, 0) },
+            { instanceType: 'g4dn.2xlarge', rank: 2, performanceRisk: 1, estimatedMonthlySavings: 10, savingsPercentage: 2, currency: 'USD', spec: gpu('g4dn.2xlarge', 8, 32, 1, 225) },
+          ],
+        }),
+        downsizeCandidate: null,
+        typeSpecs: { 'g4dn.xlarge': gpu('g4dn.xlarge', 4, 16, 1, 125) },
+        metrics: metrics({ avg: 3, p95: 8, max: 20 }, { memP95: 10 }),
+      }),
+    );
+
+    const byType = Object.fromEntries((analysis.options ?? []).map((o) => [o.instanceType, o]));
+    expect(byType['m6i.xlarge'].fit).toBe('DOES_NOT_FIT');
+    expect(byType['m6i.xlarge'].notes.join(' ')).toContain('GPU/accelerators');
+    expect(byType['g4dn.2xlarge'].fit).not.toBe('DOES_NOT_FIT');
+  });
+});
+
+describe('Ec2AnalyzerService upsize', () => {
+  const analyzer = new Ec2AnalyzerService();
+  const T3A_SMALL: InstanceTypeSpec = { instanceType: 't3a.small', vcpu: 2, memoryGiB: 2, architectures: ['x86_64'] };
+  const micro = (memP95: number, extra: Partial<Ec2AnalyzerInput> = {}) =>
+    input({
+      instance: instance({ instanceType: 't3a.micro', vcpu: 2, memoryGiB: 1 }),
+      metrics: metrics({ avg: 20, p95: 40, max: 70 }, { memP95 }),
+      costExplorerMonthlyCost: null,
+      optimizer: null,
+      downsizeCandidate: null,
+      upsizeCandidate: T3A_SMALL,
+      onDemandMonthlyPrices: { 't3a.micro': 6.86, 't3a.small': 13.72 },
+      ...extra,
+    });
+
+  it('recommends the next size up when current memory usage does not fit', () => {
+    const { analysis, draft } = analyzer.analyze(micro(95));
+
+    expect(analysis.finding).toBe('UPSIZE');
+    expect(analysis.options?.find((o) => o.kind === 'UPSIZE')).toMatchObject({ instanceType: 't3a.small', fit: 'FITS' });
+    expect(draft).toMatchObject({
+      type: RecommendationType.EC2_UPSIZE,
+      title: 'Upsize production-api: t3a.micro to t3a.small',
+      currentMonthlyCost: 6.86,
+      recommendedMonthlyCost: 13.72,
+      estimatedMonthlySavings: null,
+      estimatedYearlySavings: null,
+      risk: Level.HIGH,
+      targetKey: 't3a.small',
+    });
+    expect(draft?.description).toContain('Current usage does not fit t3a.micro');
+    expect(draft?.description).toContain('Cost increase: USD 6.86/month');
+  });
+
+  it('follows Compute Optimizer when it reports the instance as under-provisioned', () => {
+    const { draft } = analyzer.analyze(
+      micro(50, {
+        optimizer: optimizer({
+          currentInstanceType: 't3a.micro',
+          finding: 'UNDER_PROVISIONED',
+          options: [{ instanceType: 't3a.small', rank: 1, performanceRisk: 1, estimatedMonthlySavings: null, savingsPercentage: null, currency: 'USD', spec: T3A_SMALL }],
+        }),
+        upsizeCandidate: null,
+      }),
+    );
+
+    expect(draft).toMatchObject({ type: RecommendationType.EC2_UPSIZE, targetKey: 't3a.small', source: RecommendationSource.COMPUTE_OPTIMIZER });
+    expect(draft?.description).toContain('Compute Optimizer reports the instance as under-provisioned');
+  });
+
+  it('recommends upsizing a burstable instance that keeps paying surplus CPU credits', () => {
+    const base = micro(50);
+    const { draft } = analyzer.analyze({ ...base, metrics: { ...base.metrics!, cpuCredits: { balanceMin: 0, balanceAvg: 5, surplusChargedTotal: 30 } } });
+
+    expect(draft).toMatchObject({ type: RecommendationType.EC2_UPSIZE, targetKey: 't3a.small' });
+    expect(draft?.description).toContain('surplus CPU credits');
+  });
+
+  it('does not upsize for surplus credits to a size with the same CPU baseline', () => {
+    const T3A_MEDIUM: InstanceTypeSpec = { instanceType: 't3a.medium', vcpu: 2, memoryGiB: 4, architectures: ['x86_64'] };
+    const base = input({
+      instance: instance({ instanceType: 't3a.small', vcpu: 2, memoryGiB: 2 }),
+      metrics: { ...metrics({ avg: 20, p95: 40, max: 70 }, { memP95: 30 }), cpuCredits: { balanceMin: 0, balanceAvg: 5, surplusChargedTotal: 30 } },
+      costExplorerMonthlyCost: null,
+      optimizer: null,
+      downsizeCandidate: null,
+      upsizeCandidate: T3A_MEDIUM,
+      onDemandMonthlyPrices: { 't3a.small': 13.72, 't3a.medium': 27.45 },
+    });
+
+    const { analysis, draft } = analyzer.analyze(base);
+
+    expect(draft).toBeNull();
+    expect(analysis.metrics.notes.join(' ')).toContain('t3a.medium does not raise the CPU baseline');
+  });
+
+  it('does not upsize a Kubernetes node that is only full of pod memory requests', () => {
+    const { analysis, draft } = analyzer.analyze(
+      micro(30, {
+        metrics: metrics({ avg: 20, p95: 40, max: 70 }),
+        externalMemory: {
+          clusterName: 'prd',
+          nodeName: 'worker-1',
+          role: 'worker',
+          provider: 'SELF_MANAGED',
+          usedPercent: { average: 35, p95: 40, max: 45, datapoints: 300 },
+          requestsPercent: 95,
+          allocatableGb: 0.8,
+        },
+      }),
+    );
+
+    expect(analysis.options?.find((o) => o.kind === 'CURRENT')?.fit).toBe('DOES_NOT_FIT');
+    expect(draft).toBeNull();
+    expect(analysis.metrics.notes.join(' ')).toContain('Pod memory requests reach 95% of the node');
+  });
+
+  it('explains when no larger size is known and creates no recommendation', () => {
+    const { analysis, draft } = analyzer.analyze(micro(95, { upsizeCandidate: null }));
+
+    expect(draft).toBeNull();
+    expect(analysis.metrics.notes).toContain('Current usage does not fit t3a.micro, but no larger size found for t3a.micro');
+  });
+
+  it('leaves instances that fit alone', () => {
+    const { analysis } = analyzer.analyze(micro(50));
+
+    expect(analysis.finding).not.toBe('UPSIZE');
+  });
+});
+
+describe('upsizeCandidateType', () => {
+  it.each([
+    ['t3a.small', 't3a.medium'],
+    ['t3.nano', 't3.micro'],
+    ['m5.large', 'm5.xlarge'],
+    ['m5.xlarge', 'm5.2xlarge'],
+    ['m5.2xlarge', 'm5.4xlarge'],
+    ['p3.2xlarge', null],
+    ['m5.metal', null],
+  ])('%s -> %s', (type, expected) => {
+    expect(upsizeCandidateType(type)).toBe(expected);
+  });
+});
+
 describe('downsizeCandidateType', () => {
   it.each([
     ['m6i.xlarge', 'm6i.large'],
@@ -401,6 +637,10 @@ describe('downsizeCandidateType', () => {
     ['t3.nano', null],
     ['m5.metal', null],
     ['c5.9xlarge', null],
+    ['g5.2xlarge', null],
+    ['i3.2xlarge', null],
+    ['m5d.2xlarge', null],
+    ['c5n.2xlarge', null],
   ])('%s -> %s', (from, to) => {
     expect(downsizeCandidateType(from)).toBe(to);
   });

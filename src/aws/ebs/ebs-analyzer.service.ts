@@ -72,6 +72,11 @@ export class EbsAnalyzerService {
       return this.finish(analysis, monthlyCost, currency, 'DELETE');
     }
 
+    if (volume.volumeType === 'gp2' && volume.state === 'in-use' && input.attachedToStoppedInstance) {
+      notes.push('Attached instance is stopped: see the stopped instance recommendation');
+      return { analysis, draft: null };
+    }
+
     if (volume.volumeType === 'gp2' && volume.state === 'in-use') {
       const gp3Price = pricePerGbMonth.gp3;
       const peakIops = metrics?.peakIops ?? null;

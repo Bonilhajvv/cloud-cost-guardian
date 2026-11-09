@@ -9,7 +9,7 @@ import { RecommendationDraft } from '../../core/interfaces/recommendation-draft.
 
 export type CostSource = 'COST_EXPLORER_RESOURCE' | 'COMPUTE_OPTIMIZER' | 'ON_DEMAND_PRICE' | 'UNAVAILABLE';
 
-export type Ec2Finding = 'RIGHTSIZE' | 'IDLE' | 'OPTIMIZED' | 'INSUFFICIENT_DATA' | 'NOT_RUNNING';
+export type Ec2Finding = 'RIGHTSIZE' | 'IDLE' | 'OPTIMIZED' | 'INSUFFICIENT_DATA' | 'NOT_RUNNING' | 'STOPPED' | 'UPSIZE';
 
 export interface Ec2AnalyzerInput {
   instance: Ec2InstanceDetails;
@@ -17,10 +17,24 @@ export interface Ec2AnalyzerInput {
   costExplorerMonthlyCost: number | null;
   optimizer: Ec2OptimizerRecommendation | null;
   downsizeCandidate: InstanceTypeSpec | null;
+  upsizeCandidate?: InstanceTypeSpec | null;
   onDemandMonthlyPrices: Record<string, number>;
   typeSpecs?: Record<string, InstanceTypeSpec>;
   externalMemory?: ExternalMemoryStats | null;
+  attachedVolumes?: AttachedVolumeCost[];
+  kubernetesNode?: KubernetesNodeRef | null;
+  now?: Date;
   currency: string;
+}
+
+export interface AttachedVolumeCost {
+  volumeId: string;
+  monthlyCost: number | null;
+}
+
+export interface KubernetesNodeRef {
+  clusterName: string;
+  nodeName: string;
 }
 
 export interface Ec2Analysis {
@@ -69,6 +83,7 @@ export interface Ec2Analysis {
   savings: { monthly: number; yearly: number; currency: string } | null;
   usage?: UsageProfile;
   options?: InstanceOption[];
+  stoppedVolumes?: AttachedVolumeCost[];
   analyzedAt: string;
 }
 

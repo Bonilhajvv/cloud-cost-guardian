@@ -21,6 +21,7 @@ export interface AwsResourceMetadata {
   tags?: Record<string, string>;
   ec2?: Ec2InstanceDetails;
   downsizeCandidate?: InstanceTypeSpec | null;
+  upsizeCandidate?: InstanceTypeSpec | null;
   onDemandMonthlyPrices?: Record<string, number>;
   typeSpecs?: Record<string, InstanceTypeSpec>;
   metrics?: Ec2UtilizationMetrics | null;

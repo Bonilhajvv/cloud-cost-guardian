@@ -20,6 +20,7 @@ export interface NodeMemoryStats {
 export interface ClusterSuggestion {
   awsAccountId: string;
   clusterName: string | null;
+  vpcId: string | null;
   managedBy: string;
   instanceIds: string[];
   nodeNames: string[];

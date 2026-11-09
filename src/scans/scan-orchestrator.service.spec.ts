@@ -45,6 +45,9 @@ const instance: Ec2InstanceDetails = {
   state: 'running',
   region: 'sa-east-1',
   availabilityZone: 'sa-east-1a',
+  privateIpAddress: '10.0.11.58',
+  vpcId: 'vpc-1',
+  stoppedAt: null,
   platform: 'Linux/UNIX',
   architecture: 'x86_64',
   launchTime: null,
@@ -59,7 +62,7 @@ function build() {
   const inventory = {
     upsertDiscovered: jest.fn().mockResolvedValue(1),
     removeStale: jest.fn().mockResolvedValue(0),
-    patchMetadata: jest.fn(async (_acc: string, id: string, patch: AwsResourceMetadata) => {
+    patchMetadata: jest.fn(async (_acc: string, _type: string, id: string, patch: AwsResourceMetadata) => {
       store.set(id, { ...(store.get(id) ?? {}), ...patch });
     }),
     findEc2Instances: jest.fn(async () =>
@@ -87,7 +90,14 @@ function build() {
     ec2: {
       listInstances: jest.fn().mockResolvedValue([instance]),
       describeInstanceTypes: jest.fn(async (_a: unknown, _r: string, types: string[]) =>
-        new Map(types.filter((t) => t === 'm6i.large').map((t) => [t, { instanceType: t, vcpu: 2, memoryGiB: 8, architectures: ['x86_64'] }])),
+        new Map(
+          [
+            { instanceType: 'm6i.large', vcpu: 2, memoryGiB: 8, architectures: ['x86_64'] },
+            { instanceType: 'm6i.2xlarge', vcpu: 8, memoryGiB: 32, architectures: ['x86_64'] },
+          ]
+            .filter((spec) => types.includes(spec.instanceType))
+            .map((spec) => [spec.instanceType, spec]),
+        ),
       ),
       listEnabledRegions: jest.fn(),
     },
@@ -142,7 +152,7 @@ function build() {
     recommendations: { syncDrafts: jest.fn().mockResolvedValue({ created: 1, updated: 0, resolved: 0, skipped: 0 }) },
     locks: { tryWithLock: jest.fn(async (_k: string, fn: () => Promise<unknown>): Promise<LockResult<unknown>> => ({ acquired: true, value: await fn() })) },
     audit: { log: jest.fn() },
-    kubernetesMetrics: { nodeMemoryStats: jest.fn().mockResolvedValue(new Map()) },
+    kubernetesMetrics: { nodeMemoryStats: jest.fn().mockResolvedValue(new Map()), nodesByInstanceIds: jest.fn().mockResolvedValue(new Map()) },
   };
   const orchestrator = new ScanOrchestratorService(
     deps.accounts as unknown as AwsAccountsService,
@@ -191,17 +201,46 @@ describe('ScanOrchestratorService (EC2 end-to-end flow)', () => {
       savings: { monthly: 54, yearly: 648 },
     });
 
-    const [, types, drafts, resolveMissing] = deps.recommendations.syncDrafts.mock.calls[0];
-    expect(types).toEqual([RecommendationType.EC2_RIGHTSIZING, RecommendationType.EC2_IDLE]);
+    const callFor = (type: RecommendationType) => deps.recommendations.syncDrafts.mock.calls.find(([, t]: [unknown, RecommendationType[]]) => t.includes(type));
+    const [, types, drafts, currentAnalyses] = callFor(RecommendationType.EC2_RIGHTSIZING);
+    expect(types).toEqual([RecommendationType.EC2_RIGHTSIZING, RecommendationType.EC2_IDLE, RecommendationType.EC2_STOPPED, RecommendationType.EC2_UPSIZE]);
     expect(drafts).toHaveLength(1);
-    expect(resolveMissing).toBe(true);
+    expect(currentAnalyses.get('i-123')).toBe(analysis);
 
-    const [, ebsTypes, ebsDrafts] = deps.recommendations.syncDrafts.mock.calls[1];
+    const [, ebsTypes, ebsDrafts] = callFor(RecommendationType.EBS_UNUSED);
     expect(ebsTypes).toEqual([RecommendationType.EBS_UNUSED, RecommendationType.EBS_OPTIMIZATION]);
     expect(ebsDrafts).toMatchObject([{ type: RecommendationType.EBS_UNUSED, estimatedMonthlySavings: 10 }]);
 
     const actions = deps.audit.log.mock.calls.map(([e]: [{ action: AuditAction }]) => e.action);
     expect(actions).toEqual([AuditAction.SCAN_STARTED, AuditAction.SCAN_FINISHED]);
+  });
+
+  it('analyzes volumes first so a long-stopped instance gets its volume cost and the gp2 migration is skipped', async () => {
+    const { orchestrator, deps, store } = build();
+    deps.ec2.listInstances.mockResolvedValue([{ ...instance, state: 'stopped', stoppedAt: '2026-01-01T00:00:00.000Z', volumeIds: ['vol-1'] }]);
+    deps.ebs.listVolumes.mockResolvedValue([
+      { volumeId: 'vol-1', arn: 'arn:aws:ec2:sa-east-1:111122223333:volume/vol-1', name: null, volumeType: 'gp2', sizeGiB: 100, iops: 300, throughputMBps: null, state: 'in-use', attachedInstanceIds: ['i-123'], createTime: '2025-01-01T00:00:00.000Z', region: 'sa-east-1', availabilityZone: 'sa-east-1a', encrypted: true, tags: {} },
+    ]);
+    deps.kubernetesMetrics.nodesByInstanceIds.mockResolvedValue(new Map([['i-123', { clusterName: 'prd', nodeName: 'ip-10-0-11-58' }]]));
+
+    await orchestrator.run(account, FULL_SCAN_STEPS, 'MANUAL', 'user-1');
+
+    const calls = deps.recommendations.syncDrafts.mock.calls;
+    expect(calls[0][1]).toContain(RecommendationType.EBS_OPTIMIZATION);
+    expect(calls[0][2]).toEqual([]);
+    expect(calls[1][2]).toMatchObject([{ type: RecommendationType.EC2_STOPPED, estimatedMonthlySavings: 10 }]);
+    expect(calls[1][2][0].description).toContain('kubectl delete node ip-10-0-11-58');
+    expect(calls[1][3].has('vol-1')).toBe(true);
+    expect(store.get('i-123')?.analysis).toMatchObject({ finding: 'STOPPED' });
+  });
+
+  it('collects spec and price of the next size up for the upsize analysis', async () => {
+    const { orchestrator, deps, store } = build();
+
+    await orchestrator.run(account, FULL_SCAN_STEPS, 'MANUAL', 'user-1');
+
+    expect(deps.ec2.describeInstanceTypes).toHaveBeenCalledWith(account, 'sa-east-1', expect.arrayContaining(['m6i.2xlarge']));
+    expect(store.get('i-123')?.upsizeCandidate).toMatchObject({ instanceType: 'm6i.2xlarge', memoryGiB: 32 });
   });
 
   it('stops and marks the account as ERROR when the resource step fails', async () => {

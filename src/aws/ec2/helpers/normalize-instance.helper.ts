@@ -1,9 +1,21 @@
-import { Instance } from '@aws-sdk/client-ec2';
+import { Instance, InstanceTypeInfo } from '@aws-sdk/client-ec2';
 import { partitionForRegion } from '../../core/helpers/arn.helper';
 import { Ec2InstanceDetails, InstanceTypeSpec } from '../interfaces/ec2-instance.interface';
+import { parseStoppedAt } from './stopped-at.helper';
 
 export function isString<T extends string>(v: T | undefined): v is T {
   return typeof v === 'string' && v.length > 0;
+}
+
+export function countAccelerators(t: InstanceTypeInfo): number {
+  const devices = [
+    ...(t.GpuInfo?.Gpus ?? []),
+    ...(t.InferenceAcceleratorInfo?.Accelerators ?? []),
+    ...(t.NeuronInfo?.NeuronDevices ?? []),
+    ...(t.FpgaInfo?.Fpgas ?? []),
+    ...(t.MediaAcceleratorInfo?.Accelerators ?? []),
+  ];
+  return devices.reduce((total, d) => total + (d.Count ?? 0), 0);
 }
 
 export function normalizeInstance(
@@ -24,6 +36,9 @@ export function normalizeInstance(
     state: instance.State?.Name ?? 'unknown',
     region,
     availabilityZone: instance.Placement?.AvailabilityZone ?? null,
+    privateIpAddress: instance.PrivateIpAddress ?? null,
+    vpcId: instance.VpcId ?? null,
+    stoppedAt: parseStoppedAt(instance.StateTransitionReason),
     platform: instance.PlatformDetails ?? null,
     architecture: instance.Architecture ?? null,
     launchTime: instance.LaunchTime?.toISOString() ?? null,
