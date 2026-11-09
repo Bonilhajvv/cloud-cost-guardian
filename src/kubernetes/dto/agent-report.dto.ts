@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsIP,
   ArrayMaxSize,
   IsArray,
   IsBoolean,
@@ -37,6 +38,10 @@ export class ReportNodeDto {
   @IsString()
   @MaxLength(512)
   providerId?: string;
+
+  @IsOptional()
+  @IsIP()
+  internalIp?: string;
 
   @IsOptional()
   @IsString()

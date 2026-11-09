@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { AuditService } from '../audit/audit.service';
 import { AwsAccountRef } from '../aws/core/interfaces/aws-account-ref.interface';
-import { RecommendationDraft } from '../aws/core/interfaces/recommendation-draft.interface';
+import { RecommendationDraft, ResourceAnalysis } from '../aws/core/interfaces/recommendation-draft.interface';
 import { AuditAction, RecommendationStatus, RecommendationType } from '../common/enums';
 import { paginate } from '../common/helpers/paginate.helper';
 import { round } from '../common/helpers/stats.helper';
@@ -14,9 +14,12 @@ import {
   OPPORTUNITY_LABELS,
   POTENTIAL_STATUSES,
   STATUS_TRANSITIONS,
+  TRACKED_STATUSES,
+  ACCEPTED_CLOSING_REASONS,
 } from './constants/recommendation.constant';
 import { ListRecommendationsDto } from './dto/list-recommendations.dto';
 import { UpdateRecommendationStatusDto } from './dto/update-recommendation-status.dto';
+import { resolutionFor, resolutionOutcome, typeChanged } from './helpers/resolution.helper';
 import { Recommendation } from './entities/recommendation.entity';
 import { DraftSyncResult, SavingsSummary, TopOpportunity } from './interfaces/savings-summary.interface';
 
@@ -33,7 +36,7 @@ export class RecommendationsService {
     account: AwsAccountRef,
     types: readonly RecommendationType[],
     drafts: RecommendationDraft[],
-    resolveMissing: boolean,
+    currentAnalyses: ReadonlyMap<string, ResourceAnalysis> | null,
   ): Promise<DraftSyncResult> {
     const result: DraftSyncResult = { created: 0, updated: 0, resolved: 0, skipped: 0 };
     const existing = await this.repo.find({
@@ -46,7 +49,13 @@ export class RecommendationsService {
     for (const draft of drafts) {
       const k = key(draft.resourceId, draft.type);
       touched.add(k);
-      const current = byKey.get(k);
+      let current = byKey.get(k);
+      if (current && this.isTracked(current) && current.metadata.analysis && typeChanged(current.metadata.analysis, draft.analysis)) {
+        this.resolve(current, draft.analysis, currentAnalyses);
+        await this.repo.save(current);
+        result.resolved++;
+        current = undefined;
+      }
       if (current?.status === RecommendationStatus.REJECTED) {
         const sameTarget = (current.metadata.targetKey ?? null) === draft.targetKey;
         if (sameTarget) {
@@ -56,7 +65,7 @@ export class RecommendationsService {
       }
       if (current && current.status !== RecommendationStatus.REJECTED) {
         if (current.status === RecommendationStatus.ACCEPTED) {
-          current.metadata = { ...current.metadata, analysis: draft.analysis, targetKey: draft.targetKey };
+          current.metadata = { ...current.metadata, latestAnalysis: draft.analysis };
         } else {
           this.applyDraft(current, draft);
         }
@@ -70,16 +79,11 @@ export class RecommendationsService {
       result.created++;
     }
 
-    if (resolveMissing) {
-      const stale = existing.filter(
-        (r) => !touched.has(key(r.resourceId, r.type)) && POTENTIAL_STATUSES.some((s) => s === r.status),
-      );
-      for (const r of stale) {
-        r.status = RecommendationStatus.RESOLVED;
-        r.resolvedAt = new Date();
-      }
+    if (currentAnalyses) {
+      const stale = existing.filter((r) => !touched.has(key(r.resourceId, r.type)) && this.isTracked(r));
+      const closed = stale.filter((r) => this.resolve(r, currentAnalyses.get(r.resourceId), currentAnalyses));
       if (stale.length) await this.repo.save(stale);
-      result.resolved = stale.length;
+      result.resolved += closed.length;
     }
 
     this.logger.log({ msg: 'Recommendations synced', awsAccountRef: account.id, organizationId: account.organizationId, ...result });
@@ -191,6 +195,39 @@ export class RecommendationsService {
       byLabel.set(label, acc);
     }
     return [...byLabel.values()].sort((a, b) => b.monthlySavings - a.monthlySavings);
+  }
+
+  private isTracked(rec: Recommendation): boolean {
+    return TRACKED_STATUSES.some((s) => s === rec.status);
+  }
+
+  private resolve(
+    rec: Recommendation,
+    current: ResourceAnalysis | undefined,
+    currentAnalyses: ReadonlyMap<string, ResourceAnalysis> | null,
+  ): boolean {
+    const previous = rec.metadata.analysis;
+    const resolution = resolutionFor(previous, current);
+    if (rec.status === RecommendationStatus.ACCEPTED && !ACCEPTED_CLOSING_REASONS.includes(resolution.reason)) {
+      if (current) rec.metadata = { ...rec.metadata, latestAnalysis: current };
+      return false;
+    }
+    const outcome = resolutionOutcome(rec.type, previous, current, resolution, rec.currentMonthlyCost ?? null, (id) => currentAnalyses?.has(id) ?? false);
+    const now = new Date();
+    rec.metadata = { ...rec.metadata, resolution };
+    if (!outcome.implemented) {
+      rec.status = RecommendationStatus.RESOLVED;
+      rec.resolvedAt = now;
+      return true;
+    }
+    rec.status = RecommendationStatus.IMPLEMENTED;
+    rec.implementedAt = now;
+    rec.statusChangedBy = null;
+    if (outcome.realized) {
+      rec.realizedMonthlySavings = outcome.realized.amount;
+      rec.metadata = { ...rec.metadata, realizedSource: outcome.realized.source };
+    }
+    return true;
   }
 
   private applyDraft(target: Recommendation, draft: RecommendationDraft): void {

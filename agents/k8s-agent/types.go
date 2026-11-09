@@ -8,6 +8,7 @@ type Amount struct {
 type ReportNode struct {
 	Name         string            `json:"name"`
 	ProviderID   string            `json:"providerId,omitempty"`
+	InternalIP   string            `json:"internalIp,omitempty"`
 	InstanceType string            `json:"instanceType,omitempty"`
 	Role         string            `json:"role"`
 	Labels       map[string]string `json:"labels"`
@@ -59,6 +60,11 @@ type objectMeta struct {
 	OwnerReferences []ownerRef        `json:"ownerReferences"`
 }
 
+type nodeAddress struct {
+	Type    string `json:"type"`
+	Address string `json:"address"`
+}
+
 type kubeNode struct {
 	Metadata objectMeta `json:"metadata"`
 	Spec     struct {
@@ -67,6 +73,7 @@ type kubeNode struct {
 	Status struct {
 		Capacity    map[string]string `json:"capacity"`
 		Allocatable map[string]string `json:"allocatable"`
+		Addresses   []nodeAddress     `json:"addresses"`
 	} `json:"status"`
 }
 

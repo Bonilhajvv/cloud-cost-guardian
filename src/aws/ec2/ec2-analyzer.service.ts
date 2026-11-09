@@ -11,19 +11,25 @@ import {
 import { RecommendationDraft } from '../core/interfaces/recommendation-draft.interface';
 import { RecommendationCandidate } from './interfaces/recommendation-candidate.interface';
 import { ANALYZER_THRESHOLDS } from './constants/analyzer-thresholds.constant';
+import { OPTION_FIT_THRESHOLDS } from './constants/instance-options.constant';
 import { K8S_MIN_MEMORY_GIB } from './constants/kubernetes.constant';
 import { burstableBaselinePercent } from './helpers/burstable.helper';
-import { buildInstanceOption, OptionCandidate, sameSizeAlternatives } from './helpers/instance-options.helper';
+import { buildInstanceOption, OptionCandidate } from './helpers/instance-options.helper';
+import { sameSizeAlternatives, specialFamilyReason } from './helpers/instance-family.helper';
 import { kubernetesInfoFromStats, withExternalMemory } from './helpers/external-memory.helper';
 import { detectKubernetesNode } from './helpers/kubernetes-node.helper';
 import { buildUsageProfile } from './helpers/usage-profile.helper';
+import { isLongStopped } from './helpers/stopped-at.helper';
+import { STOPPED_INSTANCE_MIN_DAYS } from './constants/stopped-instance.constant';
 import { mapPerformanceRisk, maxLevel, severityFor } from './helpers/risk-level.helper';
 import { InstanceTypeSpec } from './interfaces/ec2-instance.interface';
 import { InstanceOption } from './interfaces/usage-profile.interface';
 
 @Injectable()
 export class Ec2AnalyzerService {
-  analyze(input: Ec2AnalyzerInput): Ec2AnalyzerOutput {
+  analyze(rawInput: Ec2AnalyzerInput): Ec2AnalyzerOutput {
+    const specialFamily = specialFamilyReason(rawInput.instance.instanceType);
+    const input = specialFamily ? { ...rawInput, downsizeCandidate: null } : rawInput;
     const { instance, optimizer } = input;
     const metrics = withExternalMemory(input.metrics, input.externalMemory);
     const cost = this.resolveCurrentCost(input);
@@ -37,6 +43,7 @@ export class Ec2AnalyzerService {
     const notes: string[] = [];
     if (memory && !memory.available) notes.push(memory.reason);
     if (!hasEnoughData) notes.push(`Only ${datapoints} hourly CPU datapoints available`);
+    if (specialFamily) notes.push(`Instance family has ${specialFamily}: smaller-size heuristic disabled, only Compute Optimizer recommendations are used`);
     if (cost.source === 'UNAVAILABLE') notes.push('Monthly cost unavailable');
     if (cost.source === 'ON_DEMAND_PRICE') notes.push('Monthly cost estimated from on-demand price (RI/Savings Plans discounts not considered)');
     const kubernetes = kubernetesInfoFromStats(detectKubernetesNode(instance), input.externalMemory);
@@ -92,11 +99,15 @@ export class Ec2AnalyzerService {
     analysis.options = this.buildOptions(analysis, input);
 
     if (instance.state !== 'running') {
-      analysis.finding = 'NOT_RUNNING';
-      return { analysis, draft: null };
+      if (!isLongStopped(instance, input.now ?? new Date())) {
+        analysis.finding = 'NOT_RUNNING';
+        return { analysis, draft: null };
+      }
+      return this.stoppedRecommendation(analysis, input);
     }
 
     const candidate =
+      this.upsizeCandidate(analysis, input, hasEnoughData) ??
       this.idleCandidate(analysis, hasEnoughData, cost.amount) ??
       this.optimizerCandidate(analysis, input, hasEnoughData) ??
       this.heuristicCandidate(analysis, input, cost.amount, hasEnoughData);
@@ -106,7 +117,8 @@ export class Ec2AnalyzerService {
       return { analysis, draft: null };
     }
 
-    analysis.finding = candidate.type === RecommendationType.EC2_IDLE ? 'IDLE' : 'RIGHTSIZE';
+    analysis.finding =
+      candidate.type === RecommendationType.EC2_IDLE ? 'IDLE' : candidate.type === RecommendationType.EC2_UPSIZE ? 'UPSIZE' : 'RIGHTSIZE';
     analysis.recommendation = {
       type: candidate.type,
       source: candidate.source,
@@ -117,7 +129,7 @@ export class Ec2AnalyzerService {
       confidence: candidate.confidence,
       reasons: candidate.reasons,
     };
-    if (candidate.target && instance.vcpu !== null && instance.memoryGiB !== null) {
+    if (candidate.target && candidate.type !== RecommendationType.EC2_UPSIZE && instance.vcpu !== null && instance.memoryGiB !== null) {
       analysis.reduction = {
         vcpu: { from: instance.vcpu, to: candidate.target.vcpu },
         memoryGb: { from: instance.memoryGiB, to: candidate.target.memoryGiB },
@@ -156,21 +168,23 @@ export class Ec2AnalyzerService {
     if (!analysis.usage || instance.vcpu === null || instance.memoryGiB === null) return [];
     const specs = input.typeSpecs ?? {};
     const archs = instance.architecture ? [instance.architecture] : [];
+    const currentSpec = specs[instance.instanceType];
     const candidates: OptionCandidate[] = [
-      { kind: 'CURRENT', spec: { instanceType: instance.instanceType, vcpu: instance.vcpu, memoryGiB: instance.memoryGiB, architectures: archs } },
+      { kind: 'CURRENT', spec: { ...currentSpec, instanceType: instance.instanceType, vcpu: instance.vcpu, memoryGiB: instance.memoryGiB, architectures: archs } },
     ];
     if (input.downsizeCandidate) candidates.push({ kind: 'DOWNSIZE', spec: input.downsizeCandidate });
+    if (input.upsizeCandidate) candidates.push({ kind: 'UPSIZE', spec: input.upsizeCandidate });
     for (const o of input.optimizer?.options ?? []) {
       if (o.spec) candidates.push({ kind: 'COMPUTE_OPTIMIZER', spec: o.spec, savingsHint: o.estimatedMonthlySavings });
     }
-    for (const type of sameSizeAlternatives(instance.instanceType)) {
+    for (const type of sameSizeAlternatives(instance.instanceType, Object.keys(specs))) {
       if (specs[type]) candidates.push({ kind: 'SAME_SIZE_ALTERNATIVE', spec: specs[type] });
     }
     const seen = new Set<string>();
     const usage = analysis.usage;
     return candidates
       .filter((c) => !seen.has(c.spec.instanceType) && !!seen.add(c.spec.instanceType))
-      .map((c) => buildInstanceOption(analysis, usage, c, input.onDemandMonthlyPrices, archs))
+      .map((c) => buildInstanceOption(analysis, usage, c, input.onDemandMonthlyPrices, archs, currentSpec))
       .sort((a, b) =>
         a.kind === 'CURRENT' ? -1 : b.kind === 'CURRENT' ? 1 : (a.monthlyCost ?? Infinity) - (b.monthlyCost ?? Infinity),
       );
@@ -194,6 +208,76 @@ export class Ec2AnalyzerService {
     return [
       `Kubernetes ${node.role === 'CONTROL_PLANE' ? 'control plane' : 'worker'} node${node.cluster ? ` of cluster ${node.cluster}` : ''}: apply the change through ${where}, draining the node first`,
     ];
+  }
+
+  private upsizeCandidate(analysis: Ec2Analysis, input: Ec2AnalyzerInput, hasEnoughData: boolean): RecommendationCandidate | null {
+    const type = analysis.current.instanceType;
+    const options = analysis.options ?? [];
+    const current = options.find((o) => o.kind === 'CURRENT');
+    const underProvisioned = input.optimizer?.finding === 'UNDER_PROVISIONED';
+    const surplus = analysis.metrics.cpuSurplusCreditsCharged ?? 0;
+    const requestsOnly = this.fullOfPodRequests(analysis, input);
+    if (hasEnoughData && current?.fit === 'DOES_NOT_FIT' && requestsOnly) {
+      analysis.metrics.notes.push(
+        `Pod memory requests reach ${input.externalMemory?.requestsPercent}% of the node while real usage stays at P95 ${input.externalMemory?.usedPercent.p95}%: add a node or review pod requests instead of upsizing`,
+      );
+    }
+    const doesNotFit = hasEnoughData && current?.fit === 'DOES_NOT_FIT' && !requestsOnly;
+    const creditsOnly = !underProvisioned && !doesNotFit && surplus > 0;
+    const triggers = [
+      ...(underProvisioned ? ['Compute Optimizer reports the instance as under-provisioned'] : []),
+      ...(doesNotFit ? [`Current usage does not fit ${type}`] : []),
+      ...(surplus > 0 && (hasEnoughData || !creditsOnly) ? [`Unlimited mode charged ${surplus} surplus CPU credits: CPU stays above the burstable baseline`] : []),
+    ];
+    if (triggers.length === 0) return null;
+
+    const fitting = (instanceType: string) => {
+      const option = options.find((o) => o.instanceType === instanceType && o.kind !== 'CURRENT');
+      return option && (option.fit === 'FITS' || option.fit === 'TIGHT') ? option : null;
+    };
+    const larger = (spec: InstanceTypeSpec) =>
+      (analysis.current.vcpu !== null && spec.vcpu > analysis.current.vcpu) || (analysis.current.memoryGb !== null && spec.memoryGiB > analysis.current.memoryGb);
+    const fromOptimizer = underProvisioned
+      ? [...(input.optimizer?.options ?? [])].sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity)).find((o) => o.spec && larger(o.spec) && fitting(o.instanceType))
+      : undefined;
+    const heuristic = input.upsizeCandidate && fitting(input.upsizeCandidate.instanceType) ? input.upsizeCandidate : null;
+    if (creditsOnly && heuristic && !this.raisesCpuBaseline(analysis, heuristic)) {
+      analysis.metrics.notes.push(`${triggers[0]}, but ${heuristic.instanceType} does not raise the CPU baseline: consider a larger burstable size or a non-burstable family`);
+      return null;
+    }
+    const target = fromOptimizer?.spec ?? heuristic;
+    if (!target) {
+      const known = !!input.upsizeCandidate || (input.optimizer?.options ?? []).some((o) => o.spec && larger(o.spec));
+      analysis.metrics.notes.push(`${triggers[0]}, but ${known ? 'no larger size fits current usage' : `no larger size found for ${type}`}`);
+      return null;
+    }
+    const projected = current
+      ? [`Projected on ${type}: memory P95 ${current.projected.memoryP95 ?? 'unknown'}%, CPU P95 ${current.projected.cpuP95 ?? 'unknown'}%`]
+      : [];
+    return {
+      type: RecommendationType.EC2_UPSIZE,
+      source: fromOptimizer ? RecommendationSource.COMPUTE_OPTIMIZER : RecommendationSource.CCG_HEURISTIC,
+      target,
+      targetType: target.instanceType,
+      monthlySavings: null,
+      risk: Level.HIGH,
+      confidence: this.coverageConfidence(analysis),
+      reasons: [...triggers, ...projected, ...this.kubernetesReasons(analysis)],
+    };
+  }
+
+  private fullOfPodRequests(analysis: Ec2Analysis, input: Ec2AnalyzerInput): boolean {
+    const stats = input.externalMemory;
+    if (analysis.metrics.memorySource !== 'KUBERNETES_AGENT' || !stats) return false;
+    const t = OPTION_FIT_THRESHOLDS;
+    return (stats.usedPercent.p95 ?? 0) < t.memoryP95Tight && (analysis.metrics.cpuP95 ?? 0) < t.cpuP95Tight;
+  }
+
+  private raisesCpuBaseline(analysis: Ec2Analysis, target: InstanceTypeSpec): boolean {
+    const currentBaseline = burstableBaselinePercent(analysis.current.instanceType);
+    const targetBaseline = burstableBaselinePercent(target.instanceType);
+    if (currentBaseline === null || targetBaseline === null || analysis.current.vcpu === null) return true;
+    return target.vcpu * targetBaseline > analysis.current.vcpu * currentBaseline;
   }
 
   private idleCandidate(
@@ -356,11 +440,89 @@ export class Ec2AnalyzerService {
     return days >= 14 ? Level.HIGH : Level.MEDIUM;
   }
 
+  private stoppedRecommendation(analysis: Ec2Analysis, input: Ec2AnalyzerInput): Ec2AnalyzerOutput {
+    const volumes = input.attachedVolumes ?? [];
+    const costs = volumes.map((v) => v.monthlyCost);
+    const monthly = volumes.length > 0 && costs.every((c): c is number => c !== null) ? round(costs.reduce((a, b) => a + b, 0)) : null;
+    const label = analysis.name ?? analysis.resourceId;
+    const node = input.kubernetesNode;
+    const reasons = [
+      `Instance stopped since ${input.instance.stoppedAt} (at least ${STOPPED_INSTANCE_MIN_DAYS} days)`,
+      `Attached EBS volumes keep charging while the instance is stopped: ${volumes.map((v) => v.volumeId).join(', ') || 'none'}`,
+      'Create snapshots before deleting: deletion is irreversible (snapshots cost less per GB)',
+      ...(node ? [`Node ${node.nodeName} is still registered in cluster ${node.clusterName}: remove it with kubectl delete node ${node.nodeName}`] : []),
+    ];
+    analysis.finding = 'STOPPED';
+    analysis.stoppedVolumes = volumes;
+    analysis.recommendation = {
+      type: RecommendationType.EC2_STOPPED,
+      source: RecommendationSource.CCG_HEURISTIC,
+      instanceType: null,
+      vcpu: null,
+      memoryGb: null,
+      performanceRisk: Level.MEDIUM,
+      confidence: Level.HIGH,
+      reasons,
+    };
+    analysis.savings = monthly === null ? null : { monthly, yearly: round(monthly * 12), currency: input.currency };
+    const savingsText = monthly === null ? 'savings unknown (volume cost unavailable)' : `${input.currency} ${monthly}/month`;
+    return {
+      analysis,
+      draft: {
+        resourceId: analysis.resourceId,
+        resourceArn: analysis.resourceArn,
+        service: 'ec2',
+        type: RecommendationType.EC2_STOPPED,
+        source: RecommendationSource.CCG_HEURISTIC,
+        title: `Remove stopped instance ${label}: snapshot and delete ${volumes.length > 0 ? `${volumes.length} volume(s)` : 'its volumes'}`,
+        description: `${label} (${analysis.current.instanceType}) is stopped. ${reasons.join('. ')}. Estimated savings: ${savingsText}.`,
+        severity: severityFor(monthly),
+        risk: Level.MEDIUM,
+        confidence: Level.HIGH,
+        currentMonthlyCost: monthly,
+        recommendedMonthlyCost: monthly === null ? null : 0,
+        estimatedMonthlySavings: monthly,
+        estimatedYearlySavings: monthly === null ? null : round(monthly * 12),
+        currency: input.currency,
+        targetKey: 'SNAPSHOT_AND_TERMINATE',
+        analysis,
+      },
+    };
+  }
+
+  private upsizeDraft(analysis: Ec2Analysis, c: RecommendationCandidate, currency: string): RecommendationDraft {
+    const label = analysis.name ?? analysis.resourceId;
+    const current = analysis.current;
+    const targetCost = analysis.options?.find((o) => o.instanceType === c.targetType)?.monthlyCost ?? null;
+    const increase = targetCost !== null && current.monthlyCost !== null ? round(targetCost - current.monthlyCost) : null;
+    const increaseText = increase === null ? 'Cost increase unknown (price data unavailable)' : `Cost increase: ${currency} ${increase}/month`;
+    return {
+      resourceId: analysis.resourceId,
+      resourceArn: analysis.resourceArn,
+      service: 'ec2',
+      type: c.type,
+      source: c.source,
+      title: `Upsize ${label}: ${current.instanceType} to ${c.targetType}`,
+      description: `${label} (${current.instanceType}) looks under-provisioned and may lose performance or be killed for lack of memory. ${c.reasons.join('. ')}. Recommended: move to ${c.targetType}. ${increaseText}.`,
+      severity: Level.HIGH,
+      risk: c.risk,
+      confidence: c.confidence,
+      currentMonthlyCost: current.monthlyCost,
+      recommendedMonthlyCost: targetCost,
+      estimatedMonthlySavings: null,
+      estimatedYearlySavings: null,
+      currency,
+      targetKey: c.targetType ?? c.type,
+      analysis,
+    };
+  }
+
   private toDraft(analysis: Ec2Analysis, c: RecommendationCandidate, currency: string): RecommendationDraft {
     const label = analysis.name ?? analysis.resourceId;
     const current = analysis.current;
     const monthly = c.monthlySavings === null ? null : round(c.monthlySavings);
     const isIdle = c.type === RecommendationType.EC2_IDLE;
+    if (c.type === RecommendationType.EC2_UPSIZE) return this.upsizeDraft(analysis, c, currency);
     const title = isIdle
       ? `Idle EC2 instance ${label}`
       : `Rightsize ${label}: ${current.instanceType} to ${c.targetType}`;

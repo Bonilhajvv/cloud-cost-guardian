@@ -152,6 +152,7 @@ func Aggregate(s Snapshot, metricsAvailable bool) ([]ReportNode, []ReportWorkloa
 		node := ReportNode{
 			Name:         n.Metadata.Name,
 			ProviderID:   n.Spec.ProviderID,
+			InternalIP:   internalIP(n),
 			InstanceType: instanceType,
 			Role:         nodeRole(n.Metadata.Labels),
 			Labels:       forwardedLabels(n.Metadata.Labels),
@@ -208,4 +209,13 @@ func Aggregate(s Snapshot, metricsAvailable bool) ([]ReportNode, []ReportWorkloa
 		return out[i].Kind+out[i].Name < out[j].Kind+out[j].Name
 	})
 	return nodes, out
+}
+
+func internalIP(n kubeNode) string {
+	for _, a := range n.Status.Addresses {
+		if a.Type == "InternalIP" {
+			return a.Address
+		}
+	}
+	return ""
 }

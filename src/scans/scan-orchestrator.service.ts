@@ -7,10 +7,12 @@ import { forEachRegion } from '../aws/core/helpers/region-runner.helper';
 import { RegionFailure } from '../aws/core/interfaces/region-run-result.interface';
 import { Ec2AnalyzerService } from '../aws/ec2/ec2-analyzer.service';
 import { Ec2Service } from '../aws/ec2/ec2.service';
-import { downsizeCandidateType } from '../aws/ec2/helpers/downsize-candidate.helper';
-import { sameSizeAlternatives } from '../aws/ec2/helpers/instance-options.helper';
+import { downsizeCandidateType, upsizeCandidateType } from '../aws/ec2/helpers/downsize-candidate.helper';
+import { sameSizeAlternatives, sameSizeTypePattern } from '../aws/ec2/helpers/instance-family.helper';
 import { Ec2InstanceDetails } from '../aws/ec2/interfaces/ec2-instance.interface';
-import { RecommendationDraft } from '../aws/core/interfaces/recommendation-draft.interface';
+import { AttachedVolumeCost } from '../aws/ec2/interfaces/ec2-analysis.interface';
+import { isLongStopped } from '../aws/ec2/helpers/stopped-at.helper';
+import { RecommendationDraft, ResourceAnalysis } from '../aws/core/interfaces/recommendation-draft.interface';
 import { EbsAnalyzerService } from '../aws/ebs/ebs-analyzer.service';
 import { EbsService } from '../aws/ebs/ebs.service';
 import { CloudWatchService } from '../aws/metrics/cloudwatch.service';
@@ -228,13 +230,24 @@ export class ScanOrchestratorService {
   private async enrichRegion(account: AwsAccount, region: string, instances: Ec2InstanceDetails[]): Promise<number> {
     const running = instances.filter((i) => i.state === 'running');
     const metrics = await this.cloudWatch.getEc2Utilization(account, region, running, METRICS_PERIOD_DAYS);
-    const candidateTypes = [...new Set(instances.flatMap((i) => this.comparisonTypes(i.instanceType)))];
-    const specs = await this.ec2.describeInstanceTypes(account, region, candidateTypes);
-    const prices = await this.onDemandPrices(region, instances);
+    const lookups = [
+      ...new Set(
+        instances.flatMap((i) => {
+          const candidate = downsizeCandidateType(i.instanceType);
+          const upsize = upsizeCandidateType(i.instanceType);
+          const pattern = sameSizeTypePattern(i.instanceType);
+          return [i.instanceType, ...(candidate ? [candidate] : []), ...(upsize ? [upsize] : []), ...(pattern ? [pattern] : [])];
+        }),
+      ),
+    ];
+    const specs = await this.ec2.describeInstanceTypes(account, region, lookups);
+    const comparison = new Map(instances.map((i) => [i.instanceType, this.comparisonTypes(i.instanceType, [...specs.keys()])]));
+    const prices = await this.onDemandPrices(region, instances, comparison);
     for (const instance of instances) {
       const candidate = downsizeCandidateType(instance.instanceType);
+      const upsize = upsizeCandidateType(instance.instanceType);
       const priceTable = prices.get(this.pricing.pricingOs(instance.platform) ?? '') ?? {};
-      const related = [instance.instanceType, ...this.comparisonTypes(instance.instanceType)];
+      const related = [instance.instanceType, ...(comparison.get(instance.instanceType) ?? [])];
       const onDemandMonthlyPrices = Object.fromEntries(
         related.filter((t) => priceTable[t] !== undefined).map((t) => [t, priceTable[t]]),
       );
@@ -244,11 +257,12 @@ export class ScanOrchestratorService {
           return spec ? [[t, spec] as const] : [];
         }),
       );
-      await this.inventory.patchMetadata(account.id, instance.instanceId, {
+      await this.inventory.patchMetadata(account.id, EC2_INSTANCE_RESOURCE_TYPE, instance.instanceId, {
         ec2: instance,
         tags: instance.tags,
         metrics: metrics.get(instance.instanceId) ?? null,
         downsizeCandidate: candidate ? (specs.get(candidate) ?? null) : null,
+        upsizeCandidate: upsize ? (specs.get(upsize) ?? null) : null,
         onDemandMonthlyPrices,
         typeSpecs,
       });
@@ -257,9 +271,10 @@ export class ScanOrchestratorService {
     return instances.length;
   }
 
-  private comparisonTypes(instanceType: string): string[] {
+  private comparisonTypes(instanceType: string, availableTypes: readonly string[]): string[] {
     const candidate = downsizeCandidateType(instanceType);
-    return [...(candidate ? [candidate] : []), ...sameSizeAlternatives(instanceType)];
+    const upsize = upsizeCandidateType(instanceType);
+    return [...(candidate ? [candidate] : []), ...(upsize ? [upsize] : []), ...sameSizeAlternatives(instanceType, availableTypes)];
   }
 
   private async enrichVolumes(account: AwsAccount, region: string, seenAt: Date): Promise<number> {
@@ -269,7 +284,7 @@ export class ScanOrchestratorService {
     const metrics = await this.cloudWatch.getEbsUtilization(account, region, volumes.map((v) => v.volumeId), METRICS_PERIOD_DAYS);
     const prices = await this.pricing.getEbsMonthlyPricePerGb(region, [...volumes.map((v) => v.volumeType), 'gp3']);
     for (const volume of volumes) {
-      await this.inventory.patchMetadata(account.id, volume.volumeId, {
+      await this.inventory.patchMetadata(account.id, EBS_VOLUME_RESOURCE_TYPE, volume.volumeId, {
         ebs: volume,
         tags: volume.tags,
         ebsMetrics: metrics.get(volume.volumeId) ?? null,
@@ -287,14 +302,18 @@ export class ScanOrchestratorService {
     return volumes.length;
   }
 
-  private async onDemandPrices(region: string, instances: Ec2InstanceDetails[]): Promise<Map<string, Record<string, number>>> {
+  private async onDemandPrices(
+    region: string,
+    instances: Ec2InstanceDetails[],
+    comparison: Map<string, string[]>,
+  ): Promise<Map<string, Record<string, number>>> {
     const typesByOs = new Map<string, Set<string>>();
     for (const instance of instances) {
       const os = this.pricing.pricingOs(instance.platform);
       if (!os) continue;
       const set = typesByOs.get(os) ?? new Set<string>();
       set.add(instance.instanceType);
-      for (const t of this.comparisonTypes(instance.instanceType)) set.add(t);
+      for (const t of comparison.get(instance.instanceType) ?? []) set.add(t);
       typesByOs.set(os, set);
     }
     const out = new Map<string, Record<string, number>>();
@@ -324,7 +343,7 @@ export class ScanOrchestratorService {
         for (const option of rec.options) option.spec = specs.get(option.instanceType) ?? null;
       }
       for (const resource of byRegion.get(region) ?? []) {
-        await this.inventory.patchMetadata(account.id, resource.resourceId, {
+        await this.inventory.patchMetadata(account.id, resource.resourceType, resource.resourceId, {
           computeOptimizer: byInstance.get(resource.resourceId) ?? null,
         });
       }
@@ -339,9 +358,22 @@ export class ScanOrchestratorService {
 
   async analyze(account: AwsAccount): Promise<AnalysisDetails> {
     const resources = await this.inventory.findEc2Instances(account.id);
+    const now = new Date();
+    const stoppedIds = new Set(resources.filter((r) => r.metadata.ec2 && isLongStopped(r.metadata.ec2, now)).map((r) => r.resourceId));
+    const volumes = await this.analyzeVolumes(account, stoppedIds);
+    const attachedVolumes = new Map<string, AttachedVolumeCost[]>();
+    for (const v of volumes.analyses.values()) {
+      if (v.kind !== 'EBS') continue;
+      for (const instanceId of v.current.attachedTo) {
+        attachedVolumes.set(instanceId, [...(attachedVolumes.get(instanceId) ?? []), { volumeId: v.resourceId, monthlyCost: v.current.monthlyCost }]);
+      }
+    }
     const costs = await this.costReports.monthlyEstimatesByResource(account.id);
-    const nodeStats = await this.kubernetesMetrics.nodeMemoryStats(account.organizationId, resources.map((r) => r.resourceId));
+    const instanceIds = resources.map((r) => r.resourceId);
+    const nodeStats = await this.kubernetesMetrics.nodeMemoryStats(account.organizationId, instanceIds);
+    const nodes = await this.kubernetesMetrics.nodesByInstanceIds(account.organizationId, [...stoppedIds]);
     const drafts: RecommendationDraft[] = [];
+    const analyses = new Map<string, ResourceAnalysis>();
     const findings: Record<string, number> = {};
     let analyzed = 0;
 
@@ -354,25 +386,34 @@ export class ScanOrchestratorService {
         costExplorerMonthlyCost: costs.get(resource.resourceId) ?? null,
         optimizer: m.computeOptimizer ?? null,
         downsizeCandidate: m.downsizeCandidate ?? null,
+        upsizeCandidate: m.upsizeCandidate ?? null,
         onDemandMonthlyPrices: m.onDemandMonthlyPrices ?? {},
         typeSpecs: m.typeSpecs ?? {},
         externalMemory: nodeStats.get(resource.resourceId) ?? null,
+        attachedVolumes: attachedVolumes.get(resource.resourceId) ?? [],
+        kubernetesNode: nodes.get(resource.resourceId) ?? null,
+        now,
         currency: DEFAULT_CURRENCY,
       });
-      await this.inventory.patchMetadata(account.id, resource.resourceId, { analysis });
+      await this.inventory.patchMetadata(account.id, resource.resourceType, resource.resourceId, { analysis });
+      analyses.set(resource.resourceId, analysis);
       findings[analysis.finding] = (findings[analysis.finding] ?? 0) + 1;
       if (draft) drafts.push(draft);
       analyzed++;
     }
 
-    const sync = await this.recommendations.syncDrafts(account, EC2_RECOMMENDATION_TYPES, drafts, true);
+    const sync = await this.recommendations.syncDrafts(account, EC2_RECOMMENDATION_TYPES, drafts, new Map([...volumes.analyses, ...analyses]));
     this.logger.log({ msg: 'EC2 analysis finished', awsAccountRef: account.id, analyzed, findings, drafts: drafts.length });
-    return { analyzed, findings, ...sync, ebs: await this.analyzeVolumes(account) };
+    return { analyzed, findings, ...sync, ebs: volumes.details };
   }
 
-  private async analyzeVolumes(account: AwsAccount): Promise<Omit<AnalysisDetails, 'ebs'>> {
+  private async analyzeVolumes(
+    account: AwsAccount,
+    stoppedInstanceIds: ReadonlySet<string>,
+  ): Promise<{ details: Omit<AnalysisDetails, 'ebs'>; analyses: Map<string, ResourceAnalysis> }> {
     const resources = await this.inventory.findByType(account.id, EBS_VOLUME_RESOURCE_TYPE);
     const drafts: RecommendationDraft[] = [];
+    const analyses = new Map<string, ResourceAnalysis>();
     const findings: Record<string, number> = {};
     let analyzed = 0;
     for (const resource of resources) {
@@ -383,14 +424,16 @@ export class ScanOrchestratorService {
         metrics: m.ebsMetrics ?? null,
         pricePerGbMonth: m.ebsPricePerGbMonth ?? {},
         currency: DEFAULT_CURRENCY,
+        attachedToStoppedInstance: m.ebs.attachedInstanceIds.some((id) => stoppedInstanceIds.has(id)),
       });
-      await this.inventory.patchMetadata(account.id, resource.resourceId, { analysis });
+      await this.inventory.patchMetadata(account.id, resource.resourceType, resource.resourceId, { analysis });
+      analyses.set(resource.resourceId, analysis);
       findings[analysis.finding] = (findings[analysis.finding] ?? 0) + 1;
       if (draft) drafts.push(draft);
       analyzed++;
     }
-    const sync = await this.recommendations.syncDrafts(account, EBS_RECOMMENDATION_TYPES, drafts, true);
+    const sync = await this.recommendations.syncDrafts(account, EBS_RECOMMENDATION_TYPES, drafts, analyses);
     this.logger.log({ msg: 'EBS analysis finished', awsAccountRef: account.id, analyzed, findings, drafts: drafts.length });
-    return { analyzed, findings, ...sync };
+    return { details: { analyzed, findings, ...sync }, analyses };
   }
 }

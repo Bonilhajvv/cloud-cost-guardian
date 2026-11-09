@@ -1,0 +1,1 @@
+export const STOPPED_INSTANCE_MIN_DAYS = 7;

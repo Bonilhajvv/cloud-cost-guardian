@@ -1,6 +1,6 @@
 import { round } from '../../../common/helpers/stats.helper';
 import { K8S_MIN_MEMORY_GIB } from '../constants/kubernetes.constant';
-import { OPTION_FIT_THRESHOLDS, SAME_SIZE_ALTERNATIVES } from '../constants/instance-options.constant';
+import { OPTION_FIT_THRESHOLDS } from '../constants/instance-options.constant';
 import { Ec2Analysis } from '../interfaces/ec2-analysis.interface';
 import { InstanceTypeSpec } from '../interfaces/ec2-instance.interface';
 import { InstanceOption, OptionFit, OptionKind, UsageProfile } from '../interfaces/usage-profile.interface';
@@ -10,12 +10,6 @@ const FIT_ORDER: OptionFit[] = ['FITS', 'UNKNOWN', 'TIGHT', 'DOES_NOT_FIT'];
 
 function worst(a: OptionFit, b: OptionFit): OptionFit {
   return FIT_ORDER.indexOf(a) >= FIT_ORDER.indexOf(b) ? a : b;
-}
-
-export function sameSizeAlternatives(instanceType: string): string[] {
-  const [family, size] = instanceType.split('.');
-  if (!family || !size) return [];
-  return (SAME_SIZE_ALTERNATIVES[family] ?? []).map((f) => `${f}.${size}`);
 }
 
 export interface OptionCandidate {
@@ -30,6 +24,7 @@ export function buildInstanceOption(
   candidate: OptionCandidate,
   prices: Record<string, number>,
   currentArchitectures: string[],
+  currentSpec?: InstanceTypeSpec,
 ): InstanceOption {
   const t = OPTION_FIT_THRESHOLDS;
   const { spec, kind } = candidate;
@@ -71,6 +66,21 @@ export function buildInstanceOption(
   if (node && spec.memoryGiB < K8S_MIN_MEMORY_GIB[node.role]) {
     fit = 'DOES_NOT_FIT';
     notes.push(`Kubernetes ${node.role === 'CONTROL_PLANE' ? 'control plane' : 'worker'} needs at least ${K8S_MIN_MEMORY_GIB[node.role]} GiB`);
+  }
+
+  if (kind !== 'CURRENT') {
+    for (const [field, label] of [['accelerators', 'GPU/accelerators'], ['localStorageGb', 'local instance storage GB']] as const) {
+      const have = currentSpec?.[field];
+      if (!have) continue;
+      const offered = spec[field];
+      if (offered === undefined) {
+        fit = worst(fit, 'UNKNOWN');
+        notes.push(`${label} of this type unknown (current: ${have})`);
+      } else if (offered < have) {
+        fit = 'DOES_NOT_FIT';
+        notes.push(`Loses ${label}: ${offered} vs ${have} today`);
+      }
+    }
   }
 
   if (spec.architectures.length && currentArchitectures.length && !spec.architectures.some((a) => currentArchitectures.includes(a))) {

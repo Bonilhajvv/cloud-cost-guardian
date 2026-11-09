@@ -11,7 +11,8 @@ import { KubernetesCluster } from './entities/kubernetes-cluster.entity';
 import { KubernetesNode } from './entities/kubernetes-node.entity';
 import { KubernetesUsageSample } from './entities/kubernetes-usage-sample.entity';
 import { KubernetesWorkload } from './entities/kubernetes-workload.entity';
-import { detectProvider, instanceIdFromProviderId } from './helpers/provider.helper';
+import { detectProvider } from './helpers/provider.helper';
+import { ipsToResolve, resolveNodeInstanceIds } from './helpers/node-instance.helper';
 import { AgentPrincipal } from './interfaces/kubernetes.interface';
 
 @Injectable()
@@ -29,6 +30,7 @@ export class KubernetesIngestService {
     const cluster = await this.clusters.findOneByOrFail({ id: agent.clusterId });
     const firstConnection = cluster.connectedAt === null;
     const podCount = report.nodes.reduce((s, n) => s + n.podCount, 0);
+    const instanceIds = await this.resolveInstanceIds(agent, report.nodes);
 
     await this.clusters.manager.transaction(async (manager) => {
       await manager.update(KubernetesCluster, { id: cluster.id }, {
@@ -45,14 +47,14 @@ export class KubernetesIngestService {
         installTokenHash: null,
         installTokenExpiresAt: null,
       });
-      await this.upsertNodes(manager, agent, report.nodes, seenAt);
+      await this.upsertNodes(manager, agent, report.nodes, instanceIds, seenAt);
       await this.upsertWorkloads(manager, agent, report, seenAt);
       await manager.delete(KubernetesNode, { clusterId: cluster.id, lastSeenAt: LessThan(seenAt) });
       await manager.delete(KubernetesWorkload, { clusterId: cluster.id, lastSeenAt: LessThan(seenAt) });
-      await this.insertSamples(manager, agent, report.nodes, seenAt);
+      await this.insertSamples(manager, agent, report.nodes, instanceIds, seenAt);
     });
 
-    const linkedInstances = await this.linkInstances(agent, cluster.name, report.nodes);
+    const linkedInstances = await this.linkInstances(agent, cluster.name, report.nodes, instanceIds);
 
     if (firstConnection) {
       await this.audit.log({
@@ -76,7 +78,19 @@ export class KubernetesIngestService {
     return { accepted: true, nodes: report.nodes.length, workloads: report.workloads.length, linkedInstances };
   }
 
-  private async upsertNodes(manager: EntityManager, agent: AgentPrincipal, nodes: ReportNodeDto[], seenAt: Date): Promise<void> {
+  private async resolveInstanceIds(agent: AgentPrincipal, nodes: ReportNodeDto[]): Promise<Map<string, string | null>> {
+    const resources = await this.inventory.findEc2ByPrivateIps(agent.organizationId, ipsToResolve(nodes));
+    const byIp = resources.flatMap((r) => {
+      const privateIp = r.metadata?.ec2?.privateIpAddress;
+      return privateIp ? [{ instanceId: r.resourceId, privateIp }] : [];
+    });
+    const resolved = resolveNodeInstanceIds(nodes, byIp);
+    const viaIp = nodes.filter((n) => !n.providerId && resolved.get(n.name)).length;
+    if (viaIp) this.logger.log({ msg: 'Kubernetes nodes linked by private IP', clusterId: agent.clusterId, nodes: viaIp });
+    return resolved;
+  }
+
+  private async upsertNodes(manager: EntityManager, agent: AgentPrincipal, nodes: ReportNodeDto[], instanceIds: Map<string, string | null>, seenAt: Date): Promise<void> {
     for (const batch of chunk(nodes, INGEST_BATCH_SIZE)) {
       await manager
         .createQueryBuilder()
@@ -88,7 +102,7 @@ export class KubernetesIngestService {
             clusterId: agent.clusterId,
             nodeName: n.name,
             providerId: n.providerId ?? null,
-            instanceId: instanceIdFromProviderId(n.providerId),
+            instanceId: instanceIds.get(n.name) ?? null,
             instanceType: n.instanceType ?? null,
             role: n.role,
             capacityCpu: n.capacity.cpuCores ?? null,
@@ -147,14 +161,14 @@ export class KubernetesIngestService {
     }
   }
 
-  private async insertSamples(manager: EntityManager, agent: AgentPrincipal, nodes: ReportNodeDto[], seenAt: Date): Promise<void> {
+  private async insertSamples(manager: EntityManager, agent: AgentPrincipal, nodes: ReportNodeDto[], instanceIds: Map<string, string | null>, seenAt: Date): Promise<void> {
     const rows = nodes
       .filter((n) => n.usage)
       .map((n) => ({
         organizationId: agent.organizationId,
         clusterId: agent.clusterId,
         nodeName: n.name,
-        instanceId: instanceIdFromProviderId(n.providerId),
+        instanceId: instanceIds.get(n.name) ?? null,
         cpuCores: n.usage?.cpuCores ?? null,
         memoryBytes: n.usage?.memoryBytes ?? null,
         requestsMemoryBytes: n.requests.memoryBytes ?? null,
@@ -164,18 +178,18 @@ export class KubernetesIngestService {
     for (const batch of chunk(rows, INGEST_BATCH_SIZE)) await manager.insert(KubernetesUsageSample, batch);
   }
 
-  private async linkInstances(agent: AgentPrincipal, clusterName: string, nodes: ReportNodeDto[]): Promise<number> {
+  private async linkInstances(agent: AgentPrincipal, clusterName: string, nodes: ReportNodeDto[], instanceIds: Map<string, string | null>): Promise<number> {
     const byInstance = new Map(
       nodes.flatMap((n) => {
-        const id = instanceIdFromProviderId(n.providerId);
+        const id = instanceIds.get(n.name);
         return id ? [[id, n] as const] : [];
       }),
     );
-    const resources = await this.inventory.findByResourceIds(agent.organizationId, [...byInstance.keys()]);
+    const resources = await this.inventory.findEc2ByInstanceIds(agent.organizationId, [...byInstance.keys()]);
     for (const r of resources) {
       const n = byInstance.get(r.resourceId);
       if (!n) continue;
-      await this.inventory.patchMetadata(r.awsAccountId, r.resourceId, {
+      await this.inventory.patchMetadata(r.awsAccountId, r.resourceType, r.resourceId, {
         kubernetesNode: {
           clusterId: agent.clusterId,
           clusterName,

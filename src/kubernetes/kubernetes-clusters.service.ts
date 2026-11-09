@@ -21,6 +21,7 @@ import { KubernetesWorkload } from './entities/kubernetes-workload.entity';
 import { renderAgentManifest, renderHelmValues } from './helpers/manifest.helper';
 import { generateInstallToken, parseAgentToken, sha256, signAgentToken } from './helpers/tokens.helper';
 import { AgentPrincipal, ClusterSuggestion, ManifestParams } from './interfaces/kubernetes.interface';
+import { deriveClusterName } from './helpers/cluster-name.helper';
 
 @Injectable()
 export class KubernetesClustersService {
@@ -115,10 +116,12 @@ export class KubernetesClustersService {
       if (known.has(r.resourceId)) continue;
       const analysis = r.metadata.analysis;
       if (!analysis || analysis.kind === 'EBS' || !analysis.kubernetes) continue;
-      const key = `${r.awsAccountId}|${analysis.kubernetes.cluster ?? ''}`;
+      const vpcId = r.metadata.ec2?.vpcId ?? null;
+      const key = analysis.kubernetes.cluster ? `${r.awsAccountId}|tag:${analysis.kubernetes.cluster}` : `${r.awsAccountId}|vpc:${vpcId ?? ''}`;
       const g = groups.get(key) ?? {
         awsAccountId: r.awsAccountId,
         clusterName: analysis.kubernetes.cluster,
+        vpcId,
         managedBy: analysis.kubernetes.managedBy,
         instanceIds: [],
         nodeNames: [],
@@ -130,7 +133,7 @@ export class KubernetesClustersService {
       if (cost !== null) g.estimatedMonthlyCost = round((g.estimatedMonthlyCost ?? 0) + cost);
       groups.set(key, g);
     }
-    return [...groups.values()];
+    return [...groups.values()].map((g) => ({ ...g, clusterName: g.clusterName ?? deriveClusterName(g.nodeNames) }));
   }
 
   async renderManifest(installToken: string, format: 'manifest' | 'helm-values'): Promise<string> {

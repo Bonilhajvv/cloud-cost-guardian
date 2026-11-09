@@ -3,6 +3,8 @@ export interface InstanceTypeSpec {
   vcpu: number;
   memoryGiB: number;
   architectures: string[];
+  accelerators?: number;
+  localStorageGb?: number;
 }
 
 export interface Ec2InstanceDetails {
@@ -13,6 +15,9 @@ export interface Ec2InstanceDetails {
   state: string;
   region: string;
   availabilityZone: string | null;
+  privateIpAddress: string | null;
+  vpcId: string | null;
+  stoppedAt: string | null;
   platform: string | null;
   architecture: string | null;
   launchTime: string | null;

@@ -69,12 +69,12 @@ export class ResourceInventoryService {
     return removed;
   }
 
-  async patchMetadata(awsAccountId: string, resourceId: string, patch: AwsResourceMetadata): Promise<void> {
+  async patchMetadata(awsAccountId: string, resourceType: string, resourceId: string, patch: AwsResourceMetadata): Promise<void> {
     await this.repo
       .createQueryBuilder()
       .update(AwsResource)
       .set({ metadata: () => `"metadata" || CAST(:patch AS jsonb)` })
-      .where('"awsAccountId" = :awsAccountId AND "resourceId" = :resourceId', { awsAccountId, resourceId })
+      .where('"awsAccountId" = :awsAccountId AND "resourceType" = :resourceType AND "resourceId" = :resourceId', { awsAccountId, resourceType, resourceId })
       .setParameter('patch', JSON.stringify(patch))
       .execute();
   }
@@ -116,9 +116,19 @@ export class ResourceInventoryService {
     return resource;
   }
 
-  findByResourceIds(organizationId: string, resourceIds: string[]): Promise<AwsResource[]> {
-    if (resourceIds.length === 0) return Promise.resolve([]);
-    return this.repo.find({ where: { organizationId, resourceId: In(resourceIds) } });
+  findEc2ByInstanceIds(organizationId: string, instanceIds: string[]): Promise<AwsResource[]> {
+    if (instanceIds.length === 0) return Promise.resolve([]);
+    return this.repo.find({ where: { organizationId, resourceType: EC2_INSTANCE_RESOURCE_TYPE, resourceId: In(instanceIds) } });
+  }
+
+  findEc2ByPrivateIps(organizationId: string, ips: string[]): Promise<AwsResource[]> {
+    if (ips.length === 0) return Promise.resolve([]);
+    return this.repo
+      .createQueryBuilder('r')
+      .where('r.organizationId = :organizationId', { organizationId })
+      .andWhere('r.resourceType = :type', { type: EC2_INSTANCE_RESOURCE_TYPE })
+      .andWhere(`r.metadata->'ec2'->>'privateIpAddress' IN (:...ips)`, { ips })
+      .getMany();
   }
 
   findKubernetesNodeCandidates(organizationId: string): Promise<AwsResource[]> {

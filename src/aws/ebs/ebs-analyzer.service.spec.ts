@@ -90,6 +90,20 @@ describe('EbsAnalyzerService', () => {
     });
   });
 
+  it('skips gp3 migration for volumes attached to a long-stopped instance', () => {
+    const { analysis, draft } = analyzer.analyze({
+      volume: volume(),
+      metrics: metrics(800, 40),
+      pricePerGbMonth: PRICES,
+      currency: 'USD',
+      now: NOW,
+      attachedToStoppedInstance: true,
+    });
+
+    expect(draft).toBeNull();
+    expect(analysis.metrics.notes).toContain('Attached instance is stopped: see the stopped instance recommendation');
+  });
+
   it('skips gp3 migration when peak usage exceeds the gp3 baseline', () => {
     const { analysis, draft } = analyzer.analyze({ volume: volume(), metrics: metrics(4500, 40), pricePerGbMonth: PRICES, currency: 'USD', now: NOW });
 

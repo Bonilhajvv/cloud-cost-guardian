@@ -12,6 +12,7 @@ func TestAggregate(t *testing.T) {
 	worker.Spec.ProviderID = "aws:///us-east-1a/i-0ea49e6ecda54b39d"
 	worker.Status.Capacity = map[string]string{"cpu": "2", "memory": "3977560Ki"}
 	worker.Status.Allocatable = map[string]string{"cpu": "1930m", "memory": "3460Mi"}
+	worker.Status.Addresses = []nodeAddress{{Type: "Hostname", Address: "worker-1"}, {Type: "InternalIP", Address: "10.0.11.58"}}
 	master := kubeNode{}
 	master.Metadata.Name = "master-1"
 	master.Metadata.Labels = map[string]string{"node-role.kubernetes.io/control-plane": ""}
@@ -57,6 +58,9 @@ func TestAggregate(t *testing.T) {
 	w1 := nodes[0]
 	if w1.Role != "worker" || nodes[1].Role != "control-plane" {
 		t.Errorf("roles = %s, %s", w1.Role, nodes[1].Role)
+	}
+	if w1.InternalIP != "10.0.11.58" || nodes[1].InternalIP != "" {
+		t.Errorf("internalIP = %q, %q", w1.InternalIP, nodes[1].InternalIP)
 	}
 	if w1.InstanceType != "t3.medium" || w1.PodCount != 2 {
 		t.Errorf("instanceType=%s podCount=%d", w1.InstanceType, w1.PodCount)

@@ -12,6 +12,7 @@ export interface EbsAnalyzerInput {
   pricePerGbMonth: Record<string, number>;
   currency: string;
   now?: Date;
+  attachedToStoppedInstance?: boolean;
 }
 
 export interface EbsAnalysis {

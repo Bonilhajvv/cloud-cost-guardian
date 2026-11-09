@@ -29,7 +29,7 @@ export interface UsageProfile {
   daily: { cpu: DailyUsagePoint[]; memory: DailyUsagePoint[] };
 }
 
-export type OptionKind = 'CURRENT' | 'DOWNSIZE' | 'COMPUTE_OPTIMIZER' | 'SAME_SIZE_ALTERNATIVE';
+export type OptionKind = 'CURRENT' | 'DOWNSIZE' | 'UPSIZE' | 'COMPUTE_OPTIMIZER' | 'SAME_SIZE_ALTERNATIVE';
 
 export type OptionFit = 'FITS' | 'TIGHT' | 'DOES_NOT_FIT' | 'UNKNOWN';
 
