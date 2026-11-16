@@ -20,17 +20,17 @@ function build(candidates: unknown[], connectedInstanceIds: string[] = []) {
 }
 
 describe('KubernetesClustersService.suggestions', () => {
-  const tismoo = [
-    ...['master-1', 'worker-1', 'worker-2', 'worker-3', 'worker-4', 'worker-5'].map((n) => candidate(`tismoo-ec2-kubernetes-${n}-prd`, PRD_VPC)),
-    ...['master-1', 'worker-1', 'worker-2', 'worker-3'].map((n) => candidate(`tismoo-ec2-kubernetes-${n}-hml`, HML_VPC)),
+  const acme = [
+    ...['master-1', 'worker-1', 'worker-2', 'worker-3', 'worker-4', 'worker-5'].map((n) => candidate(`acme-ec2-kubernetes-${n}-prd`, PRD_VPC)),
+    ...['master-1', 'worker-1', 'worker-2', 'worker-3'].map((n) => candidate(`acme-ec2-kubernetes-${n}-hml`, HML_VPC)),
   ];
 
   it('splits untagged clusters by VPC and derives the cluster name', async () => {
-    const groups = await build(tismoo).suggestions('org-1');
+    const groups = await build(acme).suggestions('org-1');
 
     expect(groups.map((g) => [g.clusterName, g.vpcId, g.instanceIds.length])).toEqual([
-      ['tismoo-ec2-kubernetes-prd', PRD_VPC, 6],
-      ['tismoo-ec2-kubernetes-hml', HML_VPC, 4],
+      ['acme-ec2-kubernetes-prd', PRD_VPC, 6],
+      ['acme-ec2-kubernetes-hml', HML_VPC, 4],
     ]);
     expect(groups[0].estimatedMonthlyCost).toBe(60);
   });
@@ -55,8 +55,8 @@ describe('KubernetesClustersService.suggestions', () => {
   });
 
   it('skips instances already linked to a connected cluster', async () => {
-    const groups = await build(tismoo, tismoo.slice(0, 6).map((c) => c.resourceId)).suggestions('org-1');
+    const groups = await build(acme, acme.slice(0, 6).map((c) => c.resourceId)).suggestions('org-1');
 
-    expect(groups.map((g) => g.clusterName)).toEqual(['tismoo-ec2-kubernetes-hml']);
+    expect(groups.map((g) => g.clusterName)).toEqual(['acme-ec2-kubernetes-hml']);
   });
 });

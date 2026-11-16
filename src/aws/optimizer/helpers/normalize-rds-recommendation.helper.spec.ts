@@ -4,7 +4,7 @@ import { normalizeRdsRecommendation } from './normalize-rds-recommendation.helpe
 describe('normalizeRdsRecommendation', () => {
   it('keeps class, finding, idle, options and utilization of a DB instance', () => {
     const rec = normalizeRdsRecommendation({
-      resourceArn: 'arn:aws:rds:us-east-1:105337279635:db:tismoo-rds-databases-prd',
+      resourceArn: 'arn:aws:rds:us-east-1:111122223333:db:acme-rds-databases-prd',
       currentDBInstanceClass: 'db.t3.medium',
       instanceFinding: 'Overprovisioned',
       idle: 'False',
@@ -14,8 +14,8 @@ describe('normalizeRdsRecommendation', () => {
     } as RDSDBRecommendation);
 
     expect(rec).toEqual({
-      resourceArn: 'arn:aws:rds:us-east-1:105337279635:db:tismoo-rds-databases-prd',
-      dbInstanceId: 'tismoo-rds-databases-prd',
+      resourceArn: 'arn:aws:rds:us-east-1:111122223333:db:acme-rds-databases-prd',
+      dbInstanceId: 'acme-rds-databases-prd',
       currentInstanceClass: 'db.t3.medium',
       finding: 'OVER_PROVISIONED',
       idle: false,

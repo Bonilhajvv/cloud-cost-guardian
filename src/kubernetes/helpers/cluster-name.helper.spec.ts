@@ -2,7 +2,7 @@ import { deriveClusterName } from './cluster-name.helper';
 
 describe('deriveClusterName', () => {
   it('removes role tokens and numbering and keeps the environment suffix', () => {
-    expect(deriveClusterName(['tismoo-ec2-kubernetes-master-1-prd', 'tismoo-ec2-kubernetes-worker-5-prd'])).toBe('tismoo-ec2-kubernetes-prd');
+    expect(deriveClusterName(['acme-ec2-kubernetes-master-1-prd', 'acme-ec2-kubernetes-worker-5-prd'])).toBe('acme-ec2-kubernetes-prd');
   });
 
   it('handles control-plane and node naming', () => {

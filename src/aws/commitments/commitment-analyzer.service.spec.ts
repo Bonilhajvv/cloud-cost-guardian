@@ -33,9 +33,9 @@ describe('CommitmentAnalyzerService', () => {
   const analyzer = new CommitmentAnalyzerService();
 
   it('turns the Savings Plan and RDS reservation recommendations into drafts', () => {
-    const { drafts, analyses } = analyzer.analyze({ awsAccountId: '105337279635', snapshot: snapshot(), currency: 'USD', now: NOW });
+    const { drafts, analyses } = analyzer.analyze({ awsAccountId: '111122223333', snapshot: snapshot(), currency: 'USD', now: NOW });
 
-    expect(analyses.map((a) => a.resourceId)).toEqual(['105337279635/compute-savings-plan', '105337279635/rds-reserved-instances']);
+    expect(analyses.map((a) => a.resourceId)).toEqual(['111122223333/compute-savings-plan', '111122223333/rds-reserved-instances']);
     expect(drafts[0]).toMatchObject({
       type: RecommendationType.SAVINGS_PLAN_PURCHASE,
       source: RecommendationSource.COST_EXPLORER,

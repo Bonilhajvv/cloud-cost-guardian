@@ -36,7 +36,7 @@ function build() {
     new CommitmentAnalyzerService(),
     deps.recommendations as unknown as RecommendationsService,
   );
-  const account = { id: 'acc-1', organizationId: 'org-1', awsAccountId: '105337279635', commitments: null } as AwsAccount;
+  const account = { id: 'acc-1', organizationId: 'org-1', awsAccountId: '111122223333', commitments: null } as AwsAccount;
   return { service, deps, account };
 }
 
@@ -51,7 +51,7 @@ describe('CommitmentSyncService', () => {
     const [, types, drafts, analyses] = deps.recommendations.syncDrafts.mock.calls[0];
     expect(types).toEqual([RecommendationType.SAVINGS_PLAN_PURCHASE, RecommendationType.RESERVED_INSTANCE_PURCHASE]);
     expect(drafts.map((d: { type: RecommendationType }) => d.type)).toEqual([RecommendationType.SAVINGS_PLAN_PURCHASE]);
-    expect([...analyses.keys()]).toEqual(['105337279635/compute-savings-plan', '105337279635/rds-reserved-instances']);
+    expect([...analyses.keys()]).toEqual(['111122223333/compute-savings-plan', '111122223333/rds-reserved-instances']);
   });
 
   it('reuses the stored snapshot for 24 hours to avoid paid Cost Explorer calls', async () => {

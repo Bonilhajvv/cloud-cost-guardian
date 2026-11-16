@@ -242,12 +242,12 @@ describe('Ec2AnalyzerService', () => {
         input({
           instance: stopped('2026-11-01T00:00:00.000Z'),
           attachedVolumes: volumes,
-          kubernetesNode: { clusterName: 'tismoo-prd', nodeName: 'ip-10-0-11-177' },
+          kubernetesNode: { clusterName: 'acme-prd', nodeName: 'ip-10-0-11-177' },
           now: NOW,
         }),
       );
 
-      expect(draft?.description).toContain('Node ip-10-0-11-177 is still registered in cluster tismoo-prd: remove it with kubectl delete node ip-10-0-11-177');
+      expect(draft?.description).toContain('Node ip-10-0-11-177 is still registered in cluster acme-prd: remove it with kubectl delete node ip-10-0-11-177');
     });
 
     it('stays NOT_RUNNING when stopped recently or when the stop date is unknown', () => {
