@@ -16,6 +16,7 @@ import { CostReportsService } from '../cost-reports/cost-reports.service';
 import { CostSyncService } from '../cost-reports/cost-sync.service';
 import { AdvisoryLockService } from '../database/advisory-lock.service';
 import { LockResult } from '../database/interfaces/lock-result.interface';
+import { CommitmentSyncService } from './commitment-sync.service';
 import { RdsScanService } from './rds-scan.service';
 import { KubernetesMetricsService } from '../kubernetes/kubernetes-metrics.service';
 import { RecommendationsService } from '../recommendations/recommendations.service';
@@ -154,6 +155,7 @@ function build() {
     recommendations: { syncDrafts: jest.fn().mockResolvedValue({ created: 1, updated: 0, resolved: 0, skipped: 0 }) },
     locks: { tryWithLock: jest.fn(async (_k: string, fn: () => Promise<unknown>): Promise<LockResult<unknown>> => ({ acquired: true, value: await fn() })) },
     audit: { log: jest.fn() },
+    commitmentSync: { sync: jest.fn().mockResolvedValue({ fetched: true, unavailable: [], potentialMonthlySavings: 0, created: 0, updated: 0, resolved: 0, skipped: 0 }) },
     rdsScan: {
       scan: jest.fn().mockResolvedValue({ databases: 0, failures: [] }),
       syncOptimizer: jest.fn().mockResolvedValue({ regions: {}, recommendations: 0, failures: [] }),
@@ -179,6 +181,7 @@ function build() {
     deps.audit as unknown as AuditService,
     deps.kubernetesMetrics as unknown as KubernetesMetricsService,
     deps.rdsScan as unknown as RdsScanService,
+    deps.commitmentSync as unknown as CommitmentSyncService,
   );
   return { orchestrator, deps, store };
 }

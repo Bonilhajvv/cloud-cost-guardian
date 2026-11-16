@@ -1,3 +1,4 @@
+import { CommitmentSnapshot } from '../../aws/costs/interfaces/commitment.interface';
 import {
   Column,
   CreateDateColumn,
@@ -61,6 +62,9 @@ export class AwsAccount {
 
   @Column({ type: 'timestamptz', nullable: true })
   lastErrorAt: Date | null;
+
+  @Column({ type: 'jsonb', nullable: true })
+  commitments: CommitmentSnapshot | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;

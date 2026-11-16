@@ -35,6 +35,7 @@ import { ResourceInventoryService } from '../resource-inventory/resource-invento
 import { DEFAULT_CURRENCY, FATAL_STEPS, METRICS_PERIOD_DAYS, scanLockKey } from './constants/scan.constant';
 import { groupByRegion } from './helpers/group-by-region.helper';
 import { instanceDiskUsage } from './helpers/instance-disk-usage.helper';
+import { CommitmentSyncService } from './commitment-sync.service';
 import { RdsScanService } from './rds-scan.service';
 import {
   AnalysisDetails,
@@ -68,6 +69,7 @@ export class ScanOrchestratorService {
     private readonly audit: AuditService,
     private readonly kubernetesMetrics: KubernetesMetricsService,
     private readonly rdsScan: RdsScanService,
+    private readonly commitmentSync: CommitmentSyncService,
   ) {}
 
   async run(account: AwsAccount, steps: readonly ScanStep[], trigger: ScanTrigger, userId?: string): Promise<ScanReport> {
@@ -346,7 +348,8 @@ export class ScanOrchestratorService {
   async syncCosts(account: AwsAccount): Promise<object> {
     const summary = await this.costSync.syncAccount(account);
     await this.accounts.markSynced(account.id, 'lastCostSyncAt');
-    return summary;
+    const commitments = await this.commitmentSync.sync(account);
+    return { ...summary, commitments };
   }
 
   async syncOptimizer(account: AwsAccount): Promise<OptimizerSyncDetails> {

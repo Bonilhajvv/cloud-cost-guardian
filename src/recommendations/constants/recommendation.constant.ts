@@ -31,6 +31,11 @@ export const EBS_RECOMMENDATION_TYPES = [
   RecommendationType.EBS_EXPAND,
 ] as const;
 
+export const COMMITMENT_RECOMMENDATION_TYPES = [
+  RecommendationType.SAVINGS_PLAN_PURCHASE,
+  RecommendationType.RESERVED_INSTANCE_PURCHASE,
+] as const;
+
 export const RDS_RECOMMENDATION_TYPES = [
   RecommendationType.RDS_RIGHTSIZING,
   RecommendationType.RDS_UPSIZE,
@@ -53,6 +58,8 @@ export const OPPORTUNITY_LABELS: Record<RecommendationType, string> = {
   [RecommendationType.RDS_IDLE]: 'Idle Resources',
   [RecommendationType.RDS_MULTI_AZ]: 'RDS',
   [RecommendationType.RDS_EXTENDED_SUPPORT]: 'RDS',
+  [RecommendationType.SAVINGS_PLAN_PURCHASE]: 'Savings Plans',
+  [RecommendationType.RESERVED_INSTANCE_PURCHASE]: 'Reserved Instances',
   [RecommendationType.LAMBDA_RIGHTSIZING]: 'Lambda',
 };
 

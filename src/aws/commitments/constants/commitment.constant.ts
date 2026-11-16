@@ -1,0 +1,7 @@
+export const MIN_COMMITMENT_MONTHLY_SAVINGS = 5;
+
+export const HIGH_COMMITMENT_UTILIZATION = 90;
+
+export const COMMITMENT_REFRESH_MS = 24 * 60 * 60 * 1000;
+
+export const COMMITMENT_WINDOW_DAYS = 30;

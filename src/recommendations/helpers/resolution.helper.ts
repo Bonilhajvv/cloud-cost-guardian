@@ -13,24 +13,26 @@ import {
 } from '../interfaces/recommendation-metadata.interface';
 
 function configuredType(analysis: ResourceAnalysis): string {
+  if (analysis.kind === 'COMMITMENT') return analysis.resourceId;
   if (analysis.kind === 'EBS') return analysis.current.volumeType;
   return analysis.kind === 'RDS' ? analysis.current.instanceClass : analysis.current.instanceType;
 }
 
 function recommendedType(analysis: ResourceAnalysis): string | null {
-  if (!analysis.recommendation) return null;
+  if (!analysis.recommendation || analysis.kind === 'COMMITMENT') return null;
   if (analysis.kind === 'EBS') return analysis.recommendation.targetVolumeType;
   return analysis.kind === 'RDS' ? analysis.recommendation.instanceClass : analysis.recommendation.instanceType;
 }
 
 function sizeOf(analysis: ResourceAnalysis): (number | null)[] {
+  if (analysis.kind === 'COMMITMENT') return [null];
   if (analysis.kind === 'EBS') return [analysis.current.sizeGiB];
   return analysis.kind === 'RDS' ? [analysis.current.vcpu] : [analysis.current.vcpu, analysis.current.memoryGb];
 }
 
 function recommendedSizeOf(analysis: ResourceAnalysis): (number | null)[] | null {
   if (analysis.kind === 'EBS') return analysis.recommendation ? [analysis.current.sizeGiB] : null;
-  if (analysis.kind === 'RDS') return null;
+  if (analysis.kind === 'RDS' || analysis.kind === 'COMMITMENT') return null;
   return analysis.recommendation ? [analysis.recommendation.vcpu, analysis.recommendation.memoryGb] : null;
 }
 

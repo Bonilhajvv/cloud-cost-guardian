@@ -1,10 +1,36 @@
-import { CostExplorerClient, GetCostAndUsageCommand, GetCostAndUsageWithResourcesCommand, GetCostForecastCommand, Granularity } from '@aws-sdk/client-cost-explorer';
+import {
+  CostExplorerClient,
+  GetCostAndUsageCommand,
+  GetCostAndUsageWithResourcesCommand,
+  GetCostForecastCommand,
+  GetReservationPurchaseRecommendationCommand,
+  GetReservationUtilizationCommand,
+  GetSavingsPlansCoverageCommand,
+  GetSavingsPlansPurchaseRecommendationCommand,
+  GetSavingsPlansUtilizationCommand,
+  Granularity,
+} from '@aws-sdk/client-cost-explorer';
 import { Injectable } from '@nestjs/common';
 import { AwsAccountRef } from '../core/interfaces/aws-account-ref.interface';
 import { AwsClientFactory } from '../core/aws-client.factory';
 import { toAwsIntegrationError } from '../core/errors/aws-integration.error';
 import { CostLine, CostForecast } from './interfaces/cost-line.interface';
-import { CE_REGION, METRIC, EC2_COMPUTE_SERVICE } from './constants/cost-explorer.constant';
+import { CE_REGION, COMMITMENT_LOOKBACK, COMMITMENT_PAYMENT_OPTION, METRIC, EC2_COMPUTE_SERVICE, RDS_SERVICE_NAME } from './constants/cost-explorer.constant';
+import {
+  normalizeReservationRecommendation,
+  normalizeReservationUtilization,
+  normalizeSavingsPlanRecommendation,
+  normalizeSavingsPlansCoverage,
+  normalizeSavingsPlansUtilization,
+} from './helpers/normalize-commitments.helper';
+import {
+  CommitmentTerm,
+  ReservationRecommendation,
+  ReservationUtilization,
+  SavingsPlanRecommendation,
+  SavingsPlansCoverage,
+  SavingsPlansUtilization,
+} from './interfaces/commitment.interface';
 import { flatten } from './helpers/flatten-cost-results.helper';
 
 @Injectable()
@@ -95,5 +121,62 @@ export class CostExplorerService {
       throw err;
     }
   }
-}
 
+  async getSavingsPlanRecommendation(account: AwsAccountRef, term: CommitmentTerm): Promise<SavingsPlanRecommendation | null> {
+    const client = await this.clients.createClient(CostExplorerClient, account, CE_REGION);
+    const out = await this.orNull('GetSavingsPlansPurchaseRecommendation', () =>
+      client.send(
+        new GetSavingsPlansPurchaseRecommendationCommand({
+          SavingsPlansType: 'COMPUTE_SP',
+          TermInYears: term,
+          PaymentOption: COMMITMENT_PAYMENT_OPTION,
+          LookbackPeriodInDays: COMMITMENT_LOOKBACK,
+        }),
+      ),
+    );
+    return out ? normalizeSavingsPlanRecommendation(out, term, COMMITMENT_PAYMENT_OPTION) : null;
+  }
+
+  async getRdsReservationRecommendation(account: AwsAccountRef, term: CommitmentTerm): Promise<ReservationRecommendation | null> {
+    const client = await this.clients.createClient(CostExplorerClient, account, CE_REGION);
+    const out = await this.orNull('GetReservationPurchaseRecommendation', () =>
+      client.send(
+        new GetReservationPurchaseRecommendationCommand({
+          Service: RDS_SERVICE_NAME,
+          TermInYears: term,
+          PaymentOption: COMMITMENT_PAYMENT_OPTION,
+          LookbackPeriodInDays: COMMITMENT_LOOKBACK,
+        }),
+      ),
+    );
+    return out ? normalizeReservationRecommendation(out, term, COMMITMENT_PAYMENT_OPTION) : null;
+  }
+
+  async getSavingsPlansCoverage(account: AwsAccountRef, start: string, end: string): Promise<SavingsPlansCoverage | null> {
+    const client = await this.clients.createClient(CostExplorerClient, account, CE_REGION);
+    const out = await this.orNull('GetSavingsPlansCoverage', () => client.send(new GetSavingsPlansCoverageCommand({ TimePeriod: { Start: start, End: end } })));
+    return out ? normalizeSavingsPlansCoverage(out) : null;
+  }
+
+  async getSavingsPlansUtilization(account: AwsAccountRef, start: string, end: string): Promise<SavingsPlansUtilization | null> {
+    const client = await this.clients.createClient(CostExplorerClient, account, CE_REGION);
+    const out = await this.orNull('GetSavingsPlansUtilization', () => client.send(new GetSavingsPlansUtilizationCommand({ TimePeriod: { Start: start, End: end } })));
+    return out ? normalizeSavingsPlansUtilization(out) : null;
+  }
+
+  async getReservationUtilization(account: AwsAccountRef, start: string, end: string): Promise<ReservationUtilization | null> {
+    const client = await this.clients.createClient(CostExplorerClient, account, CE_REGION);
+    const out = await this.orNull('GetReservationUtilization', () => client.send(new GetReservationUtilizationCommand({ TimePeriod: { Start: start, End: end } })));
+    return out ? normalizeReservationUtilization(out) : null;
+  }
+
+  private async orNull<T>(operation: string, call: () => Promise<T>): Promise<T | null> {
+    try {
+      return await call();
+    } catch (error) {
+      const err = toAwsIntegrationError(error, operation);
+      if (err.code === 'DATA_UNAVAILABLE') return null;
+      throw err;
+    }
+  }
+}

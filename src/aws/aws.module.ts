@@ -7,6 +7,7 @@ import { AwsMetricsModule } from './metrics/aws-metrics.module';
 import { AwsOptimizerModule } from './optimizer/aws-optimizer.module';
 import { AwsPricingModule } from './pricing/aws-pricing.module';
 import { AwsRdsModule } from './rds/aws-rds.module';
+import { AwsCommitmentsModule } from './commitments/aws-commitments.module';
 import { AwsResourcesModule } from './resources/aws-resources.module';
 
 const modules = [
@@ -19,6 +20,7 @@ const modules = [
   AwsOptimizerModule,
   AwsPricingModule,
   AwsRdsModule,
+  AwsCommitmentsModule,
 ];
 
 @Module({

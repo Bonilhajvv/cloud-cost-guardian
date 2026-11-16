@@ -15,6 +15,7 @@ Stack: Node 20+/22, NestJS 11, TypeScript 5.9, PostgreSQL 16, TypeORM 0.3, AWS S
 | CloudWatch | Quanto usa? | `src/aws/metrics` |
 | Cost Explorer | Quanto custa? | `src/aws/costs` + snapshots em `src/cost-reports` |
 | Compute Optimizer | A AWS recomenda algo? | `src/aws/optimizer` |
+| Cost Explorer (compromissos) | Vale comprar Savings Plans ou RI? | `src/aws/costs` + `src/aws/commitments` |
 | Pricing API | Quanto custaria on-demand? | `src/aws/pricing` (identidade da plataforma, cache 24h) |
 | Analyzers | O que mostrar ao usuário? | `ec2-analyzer`, `ebs-analyzer`, `rds-analyzer` (puros, sem I/O) |
 
@@ -26,6 +27,7 @@ RESOURCES  Resource Explorer (fallback: DescribeRegions + DescribeInstances) →
            → DescribeVolumes → CloudWatch EBS → preços por GB, IOPS e throughput
            → DescribeDBInstances → CloudWatch RDS → ciclo de vida da engine → preços RDS
 COSTS      GetCostAndUsage (mensal/diário por serviço) + WithResources (14d EC2) + Forecast → CostSnapshot
+           → Savings Plans e RI de RDS (recomendação, cobertura e utilização, no máximo 1x por dia) → aws_accounts.commitments
 OPTIMIZER  GetEC2InstanceRecommendations e GetRDSDatabaseRecommendations por região
 ANALYSIS   Postgres → analyzers de EBS, EC2 e RDS → metadata.analysis + Recommendation
 ```
@@ -62,7 +64,7 @@ Guards globais em `src/common/guards`: `JwtAuthGuard` → `RolesGuard` → `Tena
 4. `POST /aws-accounts/:id/test-connection` roda AssumeRole + GetCallerIdentity, valida o account id e avisa se a trust policy não exige ExternalId.
 5. `POST /aws-accounts/:id/scan` dispara o scan completo (202, assíncrono).
 
-A policy read-only inclui `rds:DescribeDBInstances`, `rds:DescribeDBMajorEngineVersions` e `compute-optimizer:GetRDSDatabaseRecommendations`. Contas conectadas antes do módulo de RDS precisam atualizar a stack. Até lá, o scan registra um aviso e segue sem RDS, sem falhar.
+A policy read-only inclui `rds:DescribeDBInstances`, `rds:DescribeDBMajorEngineVersions`, `compute-optimizer:GetRDSDatabaseRecommendations` e as leituras de compromissos do Cost Explorer (`ce:GetSavingsPlansPurchaseRecommendation`, `ce:GetSavingsPlansCoverage`, `ce:GetSavingsPlansUtilization`, `ce:GetReservationPurchaseRecommendation`, `ce:GetReservationUtilization`). Contas conectadas antes desses módulos precisam atualizar a stack. Até lá, o scan registra um aviso e segue sem esses dados, sem falhar.
 
 A identidade da plataforma vem da default credential chain (IRSA/Pod Identity no EKS) e precisa de `sts:AssumeRole` e `pricing:GetProducts`. O cliente não precisa de permissão de Pricing. As credenciais temporárias ficam só em memória, com refresh 5 min antes de expirar e deduplicação de AssumeRole concorrente. `AwsClientFactory.createClient(EC2Client, account, region)` funciona para qualquer client v3, com retry `adaptive` para throttling. Falha numa região não aborta as demais.
 
@@ -132,6 +134,19 @@ Trocar só a RAM: nas famílias `c`, `m` e `r`, o mesmo tamanho tem a mesma vCPU
 - `RDS_EXTENDED_SUPPORT`: versão maior da engine fora do suporte padrão (`DescribeDBMajorEngineVersions`). A economia é o custo do Extended Support: vCPU × preço por vCPU-hora × 730, em dobro no Multi-AZ. 180 dias antes do fim do suporte, a análise ganha um aviso.
 - Storage `gp2` → `gp3` não é recomendado no RDS: o preço por GB é o mesmo.
 - Aurora e bancos fora do status `available` ainda não são analisados.
+
+## Savings Plans e Reserved Instances
+
+As recomendações de compra vêm do próprio Cost Explorer (fonte `COST_EXPLORER`), com base nos últimos 30 dias, padrão de 1 ano sem pagamento antecipado:
+
+- `SAVINGS_PLAN_PURCHASE`: Compute Savings Plan (EC2, Fargate e Lambda). Mostra o compromisso por hora e por mês, a economia, a utilização esperada e a alternativa de 3 anos.
+- `RESERVED_INSTANCE_PURCHASE`: RI de RDS, por classe e engine, com a regra de tamanho flexível.
+- As duas pedem para aplicar antes os rightsizings e as remoções abertas, porque eles reduzem o uso e o compromisso necessário. O risco é `MEDIUM`: o compromisso é cobrado mesmo se o uso cair.
+- Recomendações com economia abaixo de USD 5/mês são ignoradas.
+
+`GET /dashboard/summary` traz `commitments`: gasto on-demand, cobertura por Savings Plans, utilização dos planos comprados e alertas de compromisso pago e não usado (abaixo de 90%).
+
+O Cost Explorer cobra USD 0,01 por chamada. Os dados de compromisso são buscados no máximo uma vez por dia por conta (até 6 chamadas) e guardados em `aws_accounts.commitments`. Nos demais ciclos do job de custos, as recomendações são recalculadas a partir do que está salvo.
 
 ## Métricas coletadas (sem instalar nada no cliente)
 
@@ -205,7 +220,8 @@ O worker é o primeiro candidato a virar microsserviço: mesma imagem, outro ent
 - Sem resource-level data no Cost Explorer nem Compute Optimizer, o custo vem do preço on-demand, que ignora RI e Savings Plans. Se a Pricing API não responder, a economia fica `null` (nunca inventada).
 - Memória só existe com CloudWatch Agent (`mem_used_percent`, Linux), Container Insights ou o agente Kubernetes. Sem eles: `Memory metrics unavailable` e risco elevado quando a RAM diminui.
 - Sem rate limit no login ainda (sugestão: `@nestjs/throttler`).
-- RDS não cobre Aurora, storage nem backup no custo. S3, Lambda e Savings Plans ficam para as próximas fases.
+- RDS não cobre Aurora, storage nem backup no custo. S3 e Lambda ficam para as próximas fases.
+- Compromissos usam o escopo padrão do Cost Explorer (conta pagadora). Em contas membro de uma AWS Organization, a recomendação pode considerar outras contas. Compras de Savings Plans e RI não são detectadas como "implementadas": a recomendação deixa de aparecer quando a AWS para de recomendá-la.
 - Aumentar disco, desligar Multi-AZ e atualizar a engine não são detectados como "implementados": a recomendação só deixa de aparecer no scan seguinte, sem registrar a economia realizada.
 - Kubernetes: recomendações por workload (requests muito acima do uso) e bin-packing de nós ainda não viram `Recommendation`; os dados já são coletados.
 - Modo EKS sem agente (access entry + IAM) ainda não existe.

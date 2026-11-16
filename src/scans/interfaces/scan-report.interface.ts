@@ -54,3 +54,14 @@ export interface AnalysisDetails {
   resolved: number;
   skipped: number;
 }
+
+export interface CommitmentSyncDetails {
+  fetched: boolean;
+  unavailable: string[];
+  potentialMonthlySavings: number;
+  created: number;
+  updated: number;
+  resolved: number;
+  skipped: number;
+  error?: string;
+}

@@ -21,6 +21,8 @@ import { AwsAccount } from './entities/aws-account.entity';
 import { buildQuickCreateUrl, predictedRoleArn } from './helpers/cloudformation.helper';
 import { buildPermissionsPolicy, buildTrustPolicy } from './helpers/iam-policy.helper';
 
+import { CommitmentSnapshot } from '../aws/costs/interfaces/commitment.interface';
+
 @Injectable()
 export class AwsAccountsService {
   private readonly logger = new Logger(AwsAccountsService.name);
@@ -189,6 +191,14 @@ export class AwsAccountsService {
 
   async markError(id: string, message: string): Promise<void> {
     await this.repo.update({ id }, { status: AwsAccountStatus.ERROR, lastError: message.slice(0, 2000), lastErrorAt: new Date() });
+  }
+
+  async saveCommitments(id: string, commitments: CommitmentSnapshot): Promise<void> {
+    await this.repo.update({ id }, { commitments });
+  }
+
+  commitmentsByOrganization(organizationId: string): Promise<Pick<AwsAccount, 'awsAccountId' | 'name' | 'commitments'>[]> {
+    return this.repo.find({ where: { organizationId }, select: { awsAccountId: true, name: true, commitments: true } });
   }
 
   countByOrganization(organizationId: string): Promise<{ status: AwsAccountStatus; count: string }[]> {
