@@ -6,7 +6,7 @@ import { round } from '../common/helpers/stats.helper';
 import { KubernetesCluster } from './entities/kubernetes-cluster.entity';
 import { KubernetesNode } from './entities/kubernetes-node.entity';
 import { KubernetesUsageSample } from './entities/kubernetes-usage-sample.entity';
-import { NodeMemoryStats } from './interfaces/kubernetes.interface';
+import { NodeDiskStats, NodeMemoryStats } from './interfaces/kubernetes.interface';
 import { KubernetesClusterStatus } from '../common/enums';
 import { CLUSTER_STALE_AFTER_MS, GIB, NODE_STATS_DAYS, USAGE_SAMPLE_RETENTION_DAYS } from './constants/kubernetes.constant';
 import { KubernetesNodeRef } from '../aws/ec2/interfaces/ec2-analysis.interface';
@@ -70,6 +70,32 @@ export class KubernetesMetricsService {
       });
     }
     return out;
+  }
+
+  async nodeDiskStats(organizationId: string, instanceIds: string[]): Promise<Map<string, NodeDiskStats>> {
+    if (instanceIds.length === 0) return new Map();
+    const since = new Date(Date.now() - NODE_STATS_DAYS * 24 * 60 * 60 * 1000);
+    const hourly = await this.samples
+      .createQueryBuilder('s')
+      .select('s.instanceId', 'instanceId')
+      .addSelect(`date_trunc('hour', s.sampledAt)`, 'hour')
+      .addSelect('AVG(s.fsUsedBytes * 100.0 / s.fsCapacityBytes)', 'avg')
+      .addSelect('MAX(s.fsUsedBytes * 100.0 / s.fsCapacityBytes)', 'max')
+      .where('s.organizationId = :organizationId', { organizationId })
+      .andWhere('s.instanceId IN (:...ids)', { ids: instanceIds })
+      .andWhere('s.sampledAt >= :since', { since })
+      .andWhere('s.fsCapacityBytes > 0')
+      .groupBy('s.instanceId')
+      .addGroupBy('hour')
+      .getRawMany<{ instanceId: string; avg: string; max: string }>();
+    const byInstance = new Map<string, { avg: number[]; max: number[] }>();
+    for (const row of hourly) {
+      const series = byInstance.get(row.instanceId) ?? { avg: [], max: [] };
+      series.avg.push(Number(row.avg));
+      series.max.push(Number(row.max));
+      byInstance.set(row.instanceId, series);
+    }
+    return new Map([...byInstance].map(([instanceId, s]) => [instanceId, { instanceId, usedPercent: summary(s.avg, s.max) }]));
   }
 
   async markStaleClusters(): Promise<number> {

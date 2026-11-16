@@ -95,3 +95,38 @@ func TestAggregateWithoutMetrics(t *testing.T) {
 		t.Error("usage must be nil without metrics-server")
 	}
 }
+
+func TestFilesystemOf(t *testing.T) {
+	var s kubeletSummary
+	if _, ok := filesystemOf(s); ok {
+		t.Fatal("summary without fs must be ignored")
+	}
+	s.Node.Fs = &struct {
+		UsedBytes     *float64 `json:"usedBytes"`
+		CapacityBytes *float64 `json:"capacityBytes"`
+	}{UsedBytes: ptr(9e9), CapacityBytes: ptr(0.0)}
+	if _, ok := filesystemOf(s); ok {
+		t.Fatal("zero capacity must be ignored")
+	}
+	s.Node.Fs.CapacityBytes = ptr(2e10)
+	if fs, ok := filesystemOf(s); !ok || fs.UsedBytes != 9e9 || fs.CapacityBytes != 2e10 {
+		t.Fatalf("unexpected filesystem %+v %v", fs, ok)
+	}
+}
+
+func TestAggregateFilesystem(t *testing.T) {
+	var s Snapshot
+	n := kubeNode{}
+	n.Metadata.Name = "worker-1"
+	other := kubeNode{}
+	other.Metadata.Name = "worker-2"
+	s.Nodes = []kubeNode{n, other}
+	s.NodeFS = map[string]Filesystem{"worker-1": {UsedBytes: 1, CapacityBytes: 4}}
+	nodes, _ := Aggregate(s, false)
+	if nodes[0].Filesystem == nil || nodes[0].Filesystem.CapacityBytes != 4 {
+		t.Fatalf("worker-1 filesystem missing: %+v", nodes[0].Filesystem)
+	}
+	if nodes[1].Filesystem != nil {
+		t.Fatal("worker-2 must have no filesystem")
+	}
+}

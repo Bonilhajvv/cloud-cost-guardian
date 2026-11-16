@@ -29,6 +29,16 @@ export class ResourceAmountDto {
   memoryBytes?: number | null;
 }
 
+export class FilesystemDto {
+  @IsNumber()
+  @Min(0)
+  usedBytes: number;
+
+  @IsNumber()
+  @Min(0)
+  capacityBytes: number;
+}
+
 export class ReportNodeDto {
   @IsString()
   @MaxLength(253)
@@ -75,6 +85,11 @@ export class ReportNodeDto {
   @ValidateNested()
   @Type(() => ResourceAmountDto)
   usage?: ResourceAmountDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => FilesystemDto)
+  filesystem?: FilesystemDto;
 
   @IsInt()
   @Min(0)

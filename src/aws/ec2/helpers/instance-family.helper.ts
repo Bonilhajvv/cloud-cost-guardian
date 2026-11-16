@@ -1,4 +1,4 @@
-import { PROCESSOR_LETTERS, SPECIAL_FEATURE_LETTERS, SPECIAL_INSTANCE_CLASSES } from '../constants/instance-family.constant';
+import { MEMORY_RATIO_LADDER, PROCESSOR_LETTERS, SPECIAL_FEATURE_LETTERS, SPECIAL_INSTANCE_CLASSES } from '../constants/instance-family.constant';
 import { ParsedInstanceType } from '../interfaces/instance-family.interface';
 
 const INSTANCE_TYPE_PATTERN = /^([a-z]+)(\d+)([a-z]*)(?:-([a-z]+))?\.([a-z0-9]+)$/;
@@ -51,4 +51,13 @@ export function sameSizeAlternatives(instanceType: string, availableTypes: reado
       );
     })
     .sort();
+}
+
+export function memorySiblingType(instanceType: string, direction: 'UP' | 'DOWN'): string | null {
+  if (specialFamilyReason(instanceType)) return null;
+  const parsed = parseInstanceType(instanceType);
+  if (!parsed) return null;
+  const index = MEMORY_RATIO_LADDER.indexOf(parsed.instanceClass);
+  const sibling = index < 0 ? undefined : MEMORY_RATIO_LADDER[index + (direction === 'UP' ? 1 : -1)];
+  return sibling ? `${sibling}${parsed.generation}${parsed.processor}${parsed.features}.${parsed.size}` : null;
 }

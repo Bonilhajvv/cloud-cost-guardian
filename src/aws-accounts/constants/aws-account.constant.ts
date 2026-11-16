@@ -27,4 +27,7 @@ export const READ_ONLY_ACTIONS = [
   'ce:GetCostForecast',
   'compute-optimizer:GetEC2InstanceRecommendations',
   'compute-optimizer:GetEnrollmentStatus',
+  'compute-optimizer:GetRDSDatabaseRecommendations',
+  'rds:DescribeDBInstances',
+  'rds:DescribeDBMajorEngineVersions',
 ] as const;

@@ -2,6 +2,8 @@ export const EC2_INSTANCE_RESOURCE_TYPE = 'ec2:instance';
 
 export const EBS_VOLUME_RESOURCE_TYPE = 'ec2:volume';
 
+export const RDS_DB_INSTANCE_RESOURCE_TYPE = 'rds:db';
+
 export const UPSERT_CHUNK_SIZE = 500;
 
 export const MEMORY_COVERAGE_HINT =

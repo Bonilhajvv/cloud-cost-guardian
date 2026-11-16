@@ -28,6 +28,15 @@ export const EC2_RECOMMENDATION_TYPES = [
 export const EBS_RECOMMENDATION_TYPES = [
   RecommendationType.EBS_UNUSED,
   RecommendationType.EBS_OPTIMIZATION,
+  RecommendationType.EBS_EXPAND,
+] as const;
+
+export const RDS_RECOMMENDATION_TYPES = [
+  RecommendationType.RDS_RIGHTSIZING,
+  RecommendationType.RDS_UPSIZE,
+  RecommendationType.RDS_IDLE,
+  RecommendationType.RDS_MULTI_AZ,
+  RecommendationType.RDS_EXTENDED_SUPPORT,
 ] as const;
 
 export const OPPORTUNITY_LABELS: Record<RecommendationType, string> = {
@@ -38,11 +47,18 @@ export const OPPORTUNITY_LABELS: Record<RecommendationType, string> = {
   [RecommendationType.RESOURCE_IDLE]: 'Idle Resources',
   [RecommendationType.EBS_UNUSED]: 'EBS',
   [RecommendationType.EBS_OPTIMIZATION]: 'EBS',
+  [RecommendationType.EBS_EXPAND]: 'EBS',
   [RecommendationType.RDS_RIGHTSIZING]: 'RDS',
+  [RecommendationType.RDS_UPSIZE]: 'RDS',
+  [RecommendationType.RDS_IDLE]: 'Idle Resources',
+  [RecommendationType.RDS_MULTI_AZ]: 'RDS',
+  [RecommendationType.RDS_EXTENDED_SUPPORT]: 'RDS',
   [RecommendationType.LAMBDA_RIGHTSIZING]: 'Lambda',
 };
 
-export const REMOVAL_TYPES: readonly RecommendationType[] = [RecommendationType.EC2_IDLE, RecommendationType.EBS_UNUSED, RecommendationType.EC2_STOPPED];
+export const REMOVAL_TYPES: readonly RecommendationType[] = [RecommendationType.EC2_IDLE, RecommendationType.EBS_UNUSED, RecommendationType.EC2_STOPPED, RecommendationType.RDS_IDLE];
+
+export const COST_INCREASE_TYPES: readonly RecommendationType[] = [RecommendationType.EC2_UPSIZE, RecommendationType.EBS_EXPAND, RecommendationType.RDS_UPSIZE];
 
 export const TRACKED_STATUSES = [...POTENTIAL_STATUSES, RecommendationStatus.ACCEPTED] as const;
 

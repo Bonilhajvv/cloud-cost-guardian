@@ -26,6 +26,7 @@ export interface ResourceScanDetails {
   resources: number;
   ec2Instances: number;
   ebsVolumes: number;
+  rdsDatabases: number;
   regions: string[];
   failures: RegionFailure[];
   staleRemoved: number;
@@ -35,10 +36,17 @@ export interface OptimizerSyncDetails {
   regions: Record<string, string>;
   recommendations: number;
   failures: RegionFailure[];
+  rds?: Omit<OptimizerSyncDetails, 'rds'>;
+}
+
+export interface RdsScanDetails {
+  databases: number;
+  failures: RegionFailure[];
 }
 
 export interface AnalysisDetails {
-  ebs?: Omit<AnalysisDetails, 'ebs'>;
+  ebs?: Omit<AnalysisDetails, 'ebs' | 'rds'>;
+  rds?: Omit<AnalysisDetails, 'ebs' | 'rds'>;
   analyzed: number;
   findings: Record<string, number>;
   created: number;

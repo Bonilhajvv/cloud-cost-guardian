@@ -32,6 +32,12 @@ export class KubernetesUsageSample {
   @Column({ type: 'bigint', nullable: true, transformer: numericTransformer })
   allocatableMemoryBytes: number | null;
 
+  @Column({ type: 'bigint', nullable: true, transformer: numericTransformer })
+  fsUsedBytes: number | null;
+
+  @Column({ type: 'bigint', nullable: true, transformer: numericTransformer })
+  fsCapacityBytes: number | null;
+
   @Column({ type: 'timestamptz' })
   sampledAt: Date;
 }

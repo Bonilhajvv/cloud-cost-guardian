@@ -163,7 +163,7 @@ export class KubernetesIngestService {
 
   private async insertSamples(manager: EntityManager, agent: AgentPrincipal, nodes: ReportNodeDto[], instanceIds: Map<string, string | null>, seenAt: Date): Promise<void> {
     const rows = nodes
-      .filter((n) => n.usage)
+      .filter((n) => n.usage || n.filesystem)
       .map((n) => ({
         organizationId: agent.organizationId,
         clusterId: agent.clusterId,
@@ -173,6 +173,8 @@ export class KubernetesIngestService {
         memoryBytes: n.usage?.memoryBytes ?? null,
         requestsMemoryBytes: n.requests.memoryBytes ?? null,
         allocatableMemoryBytes: n.allocatable.memoryBytes ?? null,
+        fsUsedBytes: n.filesystem?.usedBytes ?? null,
+        fsCapacityBytes: n.filesystem?.capacityBytes ?? null,
         sampledAt: seenAt,
       }));
     for (const batch of chunk(rows, INGEST_BATCH_SIZE)) await manager.insert(KubernetesUsageSample, batch);

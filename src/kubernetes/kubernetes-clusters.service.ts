@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AuditService } from '../audit/audit.service';
+import { isEc2Analysis } from '../aws/core/helpers/resource-analysis.helper';
 import { AwsAccountsService } from '../aws-accounts/aws-accounts.service';
 import { PaginationQueryDto } from '../common/dto/pagination.dto';
 import { AuditAction, KubernetesClusterStatus } from '../common/enums';
@@ -115,7 +116,7 @@ export class KubernetesClustersService {
     for (const r of candidates) {
       if (known.has(r.resourceId)) continue;
       const analysis = r.metadata.analysis;
-      if (!analysis || analysis.kind === 'EBS' || !analysis.kubernetes) continue;
+      if (!analysis || !isEc2Analysis(analysis) || !analysis.kubernetes) continue;
       const vpcId = r.metadata.ec2?.vpcId ?? null;
       const key = analysis.kubernetes.cluster ? `${r.awsAccountId}|tag:${analysis.kubernetes.cluster}` : `${r.awsAccountId}|vpc:${vpcId ?? ''}`;
       const g = groups.get(key) ?? {

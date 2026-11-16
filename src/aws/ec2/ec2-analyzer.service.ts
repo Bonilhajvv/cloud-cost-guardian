@@ -110,7 +110,8 @@ export class Ec2AnalyzerService {
       this.upsizeCandidate(analysis, input, hasEnoughData) ??
       this.idleCandidate(analysis, hasEnoughData, cost.amount) ??
       this.optimizerCandidate(analysis, input, hasEnoughData) ??
-      this.heuristicCandidate(analysis, input, cost.amount, hasEnoughData);
+      this.heuristicCandidate(analysis, input, cost.amount, hasEnoughData) ??
+      this.lessMemoryCandidate(analysis, input, hasEnoughData);
 
     if (!candidate) {
       analysis.finding = !hasEnoughData && !optimizer ? 'INSUFFICIENT_DATA' : 'OPTIMIZED';
@@ -177,6 +178,8 @@ export class Ec2AnalyzerService {
     for (const o of input.optimizer?.options ?? []) {
       if (o.spec) candidates.push({ kind: 'COMPUTE_OPTIMIZER', spec: o.spec, savingsHint: o.estimatedMonthlySavings });
     }
+    if (input.moreMemoryCandidate) candidates.push({ kind: 'MORE_MEMORY', spec: input.moreMemoryCandidate });
+    if (input.lessMemoryCandidate) candidates.push({ kind: 'LESS_MEMORY', spec: input.lessMemoryCandidate });
     for (const type of sameSizeAlternatives(instance.instanceType, Object.keys(specs))) {
       if (specs[type]) candidates.push({ kind: 'SAME_SIZE_ALTERNATIVE', spec: specs[type] });
     }
@@ -241,19 +244,25 @@ export class Ec2AnalyzerService {
       ? [...(input.optimizer?.options ?? [])].sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity)).find((o) => o.spec && larger(o.spec) && fitting(o.instanceType))
       : undefined;
     const heuristic = input.upsizeCandidate && fitting(input.upsizeCandidate.instanceType) ? input.upsizeCandidate : null;
+    const memoryBound = doesNotFit && surplus === 0 && (analysis.metrics.cpuP95 ?? Infinity) < OPTION_FIT_THRESHOLDS.cpuP95Fits;
+    const moreMemory = memoryBound && input.moreMemoryCandidate && fitting(input.moreMemoryCandidate.instanceType) ? input.moreMemoryCandidate : null;
     if (creditsOnly && heuristic && !this.raisesCpuBaseline(analysis, heuristic)) {
       analysis.metrics.notes.push(`${triggers[0]}, but ${heuristic.instanceType} does not raise the CPU baseline: consider a larger burstable size or a non-burstable family`);
       return null;
     }
-    const target = fromOptimizer?.spec ?? heuristic;
+    const target = fromOptimizer?.spec ?? moreMemory ?? heuristic;
     if (!target) {
-      const known = !!input.upsizeCandidate || (input.optimizer?.options ?? []).some((o) => o.spec && larger(o.spec));
+      const known = !!input.upsizeCandidate || !!input.moreMemoryCandidate || (input.optimizer?.options ?? []).some((o) => o.spec && larger(o.spec));
       analysis.metrics.notes.push(`${triggers[0]}, but ${known ? 'no larger size fits current usage' : `no larger size found for ${type}`}`);
       return null;
     }
     const projected = current
       ? [`Projected on ${type}: memory P95 ${current.projected.memoryP95 ?? 'unknown'}%, CPU P95 ${current.projected.cpuP95 ?? 'unknown'}%`]
       : [];
+    const memoryOnly =
+      target === moreMemory
+        ? [`Only memory is short: ${target.instanceType} keeps ${target.vcpu} vCPU and raises memory to ${target.memoryGiB} GiB, cheaper than doubling the size`]
+        : [];
     return {
       type: RecommendationType.EC2_UPSIZE,
       source: fromOptimizer ? RecommendationSource.COMPUTE_OPTIMIZER : RecommendationSource.CCG_HEURISTIC,
@@ -262,7 +271,7 @@ export class Ec2AnalyzerService {
       monthlySavings: null,
       risk: Level.HIGH,
       confidence: this.coverageConfidence(analysis),
-      reasons: [...triggers, ...projected, ...this.kubernetesReasons(analysis)],
+      reasons: [...triggers, ...projected, ...memoryOnly, ...this.kubernetesReasons(analysis)],
     };
   }
 
@@ -431,6 +440,33 @@ export class Ec2AnalyzerService {
       monthlySavings: currentCost === null ? null : currentCost * (1 - priceRatio),
       risk,
       confidence,
+      reasons,
+    };
+  }
+
+  private lessMemoryCandidate(analysis: Ec2Analysis, input: Ec2AnalyzerInput, hasEnoughData: boolean): RecommendationCandidate | null {
+    const target = input.lessMemoryCandidate;
+    const { cpuP95, memoryAvailable, memoryP95 } = analysis.metrics;
+    if (!hasEnoughData || !target || !memoryAvailable || memoryP95 === null || cpuP95 === null) return null;
+    if (input.optimizer?.finding === 'OPTIMIZED' || input.optimizer?.finding === 'UNDER_PROVISIONED') return null;
+    if ((analysis.metrics.cpuSurplusCreditsCharged ?? 0) > 0) return null;
+    const option = analysis.options?.find((o) => o.instanceType === target.instanceType);
+    if (!option || option.fit !== 'FITS' || option.monthlySavings === null || option.monthlySavings <= 0) return null;
+
+    const reasons = [
+      `Memory P95 ${memoryP95}% of ${analysis.current.memoryGb} GiB while CPU P95 is ${cpuP95}%`,
+      `${target.instanceType} keeps ${target.vcpu} vCPU with ${target.memoryGiB} GiB: projected memory P95 ${option.projected.memoryP95}%`,
+      ...(analysis.current.costSource === 'ON_DEMAND_PRICE' ? ['Savings estimated from on-demand prices; RI/Savings Plans discounts not considered'] : []),
+      ...this.kubernetesReasons(analysis),
+    ];
+    return {
+      type: RecommendationType.EC2_RIGHTSIZING,
+      source: RecommendationSource.CCG_HEURISTIC,
+      target,
+      targetType: target.instanceType,
+      monthlySavings: option.monthlySavings,
+      risk: Level.LOW,
+      confidence: this.coverageConfidence(analysis),
       reasons,
     };
   }

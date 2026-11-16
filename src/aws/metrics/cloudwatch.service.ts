@@ -20,9 +20,11 @@ import {
 } from './constants/cloudwatch.constant';
 import { buildDailyUsage } from './helpers/build-daily-usage.helper';
 import { buildEbsUtilization } from './helpers/build-ebs-utilization.helper';
+import { buildRdsUtilization } from './helpers/build-rds-utilization.helper';
+import { RdsUtilizationMetrics } from './interfaces/rds-metrics.interface';
 import { buildUtilization } from './helpers/build-utilization.helper';
 import { EbsUtilizationMetrics, MetricQuerySpec, TimeSeries } from './interfaces/ebs-metrics.interface';
-import { EbsQueryKind, QueryKind } from './interfaces/metric-query-kind.type';
+import { EbsQueryKind, QueryKind, RdsQueryKind } from './interfaces/metric-query-kind.type';
 import { Ec2UtilizationMetrics, MemorySource } from './interfaces/utilization-metrics.interface';
 
 @Injectable()
@@ -141,6 +143,35 @@ export class CloudWatchService {
     });
     for (const [volumeId, g] of grouped) result.set(volumeId, buildEbsUtilization(g, periodDays, end));
     this.logger.log({ msg: 'EBS utilization collected', region, volumes: volumeIds.length });
+    return result;
+  }
+
+  async getRdsUtilization(
+    account: AwsAccountRef,
+    region: string,
+    dbInstanceIds: readonly string[],
+    periodDays = 14,
+  ): Promise<Map<string, RdsUtilizationMetrics>> {
+    const result = new Map<string, RdsUtilizationMetrics>();
+    if (dbInstanceIds.length === 0) return result;
+    const client = await this.clients.createClient(CloudWatchClient, account, region);
+    const specs: MetricQuerySpec<RdsQueryKind>[] = [];
+    for (const id of dbInstanceIds) {
+      const rds = (kind: RdsQueryKind, metricName: string, stat: string) =>
+        specs.push({ ownerId: id, kind, namespace: 'AWS/RDS', metricName, dimensions: [{ Name: 'DBInstanceIdentifier', Value: id }], stat, period: HOUR });
+      rds('cpuAvg', 'CPUUtilization', 'Average');
+      rds('cpuMax', 'CPUUtilization', 'Maximum');
+      rds('connections', 'DatabaseConnections', 'Maximum');
+    }
+    const end = new Date();
+    const series = await this.fetch(client, specs, new Date(end.getTime() - periodDays * DAY * 1000), end, region);
+    const grouped = new Map<string, Partial<Record<RdsQueryKind, TimeSeries>>>();
+    series.forEach((s, i) => {
+      const { ownerId, kind } = specs[i];
+      grouped.set(ownerId, { ...(grouped.get(ownerId) ?? {}), [kind]: s });
+    });
+    for (const [id, g] of grouped) result.set(id, buildRdsUtilization(g, periodDays, end));
+    this.logger.log({ msg: 'RDS utilization collected', region, databases: dbInstanceIds.length });
     return result;
   }
 

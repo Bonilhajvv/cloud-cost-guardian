@@ -1,4 +1,4 @@
-import { parseInstanceType, sameSizeAlternatives, sameSizeTypePattern, specialFamilyReason } from './instance-family.helper';
+import { memorySiblingType, parseInstanceType, sameSizeAlternatives, sameSizeTypePattern, specialFamilyReason } from './instance-family.helper';
 
 describe('parseInstanceType', () => {
   it.each([
@@ -59,5 +59,27 @@ describe('sameSizeAlternatives', () => {
   it('builds the DescribeInstanceTypes wildcard', () => {
     expect(sameSizeTypePattern('c6gd.2xlarge')).toBe('c*.2xlarge');
     expect(sameSizeTypePattern('u-6tb1.metal')).toBeNull();
+  });
+});
+
+describe('memorySiblingType', () => {
+  it.each([
+    ['m6i.large', 'UP', 'r6i.large'],
+    ['m6i.large', 'DOWN', 'c6i.large'],
+    ['c7g.xlarge', 'UP', 'm7g.xlarge'],
+    ['r5.2xlarge', 'DOWN', 'm5.2xlarge'],
+    ['m7i-flex.large', 'DOWN', 'c7i-flex.large'],
+  ] as const)('%s %s is %s', (type, direction, expected) => {
+    expect(memorySiblingType(type, direction)).toBe(expected);
+  });
+
+  it.each([
+    ['r6i.large', 'UP'],
+    ['c6i.large', 'DOWN'],
+    ['t3.medium', 'UP'],
+    ['m5d.large', 'UP'],
+    ['x2iedn.xlarge', 'DOWN'],
+  ] as const)('%s %s has no sibling', (type, direction) => {
+    expect(memorySiblingType(type, direction)).toBeNull();
   });
 });

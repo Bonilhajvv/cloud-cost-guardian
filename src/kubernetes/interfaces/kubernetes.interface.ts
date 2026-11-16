@@ -17,6 +17,11 @@ export interface NodeMemoryStats {
   allocatableGb: number | null;
 }
 
+export interface NodeDiskStats {
+  instanceId: string;
+  usedPercent: MetricSummary;
+}
+
 export interface ClusterSuggestion {
   awsAccountId: string;
   clusterName: string | null;

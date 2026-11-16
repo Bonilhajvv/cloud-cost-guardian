@@ -18,6 +18,6 @@ data:
   AWS_ASSUME_ROLE_DURATION_SECONDS: "3600"
   AWS_MAX_ATTEMPTS: "6"
   PUBLIC_API_URL: https://api.cloudcostguardian.example
-  K8S_AGENT_IMAGE: ghcr.io/your-org/ccg-k8s-agent:0.1.0
+  K8S_AGENT_IMAGE: ghcr.io/your-org/ccg-k8s-agent:0.2.0
   K8S_AGENT_HELM_CHART: oci://ghcr.io/your-org/charts/ccg-k8s-agent
   CFN_TEMPLATE_URL: https://ccg-public.s3.amazonaws.com/cloudformation/readonly-role.json

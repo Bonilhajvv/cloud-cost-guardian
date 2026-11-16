@@ -11,6 +11,6 @@ export interface PriceFilter {
 }
 
 export interface CachedPrice {
-  monthly: number | null;
+  value: unknown;
   expiresAt: number;
 }

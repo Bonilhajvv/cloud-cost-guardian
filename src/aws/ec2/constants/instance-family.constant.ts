@@ -23,3 +23,5 @@ export const SPECIAL_FEATURE_LETTERS: Record<string, string> = {
 };
 
 export const PROCESSOR_LETTERS = ['i', 'a', 'g'];
+
+export const MEMORY_RATIO_LADDER = ['c', 'm', 'r'];

@@ -6,6 +6,7 @@ import { AwsEc2Module } from './ec2/aws-ec2.module';
 import { AwsMetricsModule } from './metrics/aws-metrics.module';
 import { AwsOptimizerModule } from './optimizer/aws-optimizer.module';
 import { AwsPricingModule } from './pricing/aws-pricing.module';
+import { AwsRdsModule } from './rds/aws-rds.module';
 import { AwsResourcesModule } from './resources/aws-resources.module';
 
 const modules = [
@@ -17,6 +18,7 @@ const modules = [
   AwsCostsModule,
   AwsOptimizerModule,
   AwsPricingModule,
+  AwsRdsModule,
 ];
 
 @Module({

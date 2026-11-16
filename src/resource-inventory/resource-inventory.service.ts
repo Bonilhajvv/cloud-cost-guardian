@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, LessThan, Repository } from 'typeorm';
+import { isEc2Analysis } from '../aws/core/helpers/resource-analysis.helper';
 import { AwsAccountRef } from '../aws/core/interfaces/aws-account-ref.interface';
 import { AwsResourceData } from '../aws/resources/interfaces/aws-resource-data.interface';
 import { chunk } from '../common/helpers/stats.helper';
@@ -143,7 +144,7 @@ export class ResourceInventoryService {
   async getUsage(organizationId: string, id: string): Promise<ResourceUsageView> {
     const resource = await this.get(organizationId, id);
     const analysis = resource.metadata.analysis;
-    const ec2 = analysis && analysis.kind !== 'EBS' ? analysis : null;
+    const ec2 = analysis && isEc2Analysis(analysis) ? analysis : null;
     return {
       resourceId: resource.resourceId,
       name: resource.name,

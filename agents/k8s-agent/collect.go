@@ -5,7 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
+)
+
+const (
+	kubeletConcurrency = 16
+	kubeletTimeout     = 5 * time.Second
 )
 
 func listInto[T any](ctx context.Context, k *Kube, path string, required bool) ([]T, error) {
@@ -36,6 +42,7 @@ func Collect(ctx context.Context, k *Kube, installMethod string) (*Report, error
 	if s.Pods, err = listInto[kubePod](ctx, k, "/api/v1/pods", true); err != nil {
 		return nil, err
 	}
+	s.NodeFS = nodeFilesystems(ctx, k, s.Nodes)
 	s.ReplicaSets, _ = listInto[kubeScalable](ctx, k, "/apis/apps/v1/replicasets", false)
 	s.Deployments, _ = listInto[kubeScalable](ctx, k, "/apis/apps/v1/deployments", false)
 	s.StatefulSets, _ = listInto[kubeScalable](ctx, k, "/apis/apps/v1/statefulsets", false)
@@ -64,4 +71,50 @@ func Collect(ctx context.Context, k *Kube, installMethod string) (*Report, error
 		Nodes:                  nodes,
 		Workloads:              workloads,
 	}, nil
+}
+
+func filesystemOf(summary kubeletSummary) (Filesystem, bool) {
+	fs := summary.Node.Fs
+	if fs == nil || fs.UsedBytes == nil || fs.CapacityBytes == nil || *fs.CapacityBytes <= 0 {
+		return Filesystem{}, false
+	}
+	return Filesystem{UsedBytes: *fs.UsedBytes, CapacityBytes: *fs.CapacityBytes}, true
+}
+
+func nodeFilesystems(ctx context.Context, k *Kube, nodes []kubeNode) map[string]Filesystem {
+	out := map[string]Filesystem{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	var failed []string
+	var lastErr error
+	sem := make(chan struct{}, kubeletConcurrency)
+	for _, n := range nodes {
+		wg.Add(1)
+		go func(n kubeNode) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			reqCtx, cancel := context.WithTimeout(ctx, kubeletTimeout)
+			defer cancel()
+			var summary kubeletSummary
+			err := k.NodeSummary(reqCtx, n, &summary)
+			fs, ok := filesystemOf(summary)
+			if err == nil && !ok {
+				err = errors.New("summary without node filesystem")
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				failed = append(failed, n.Metadata.Name)
+				lastErr = err
+				return
+			}
+			out[n.Metadata.Name] = fs
+		}(n)
+	}
+	wg.Wait()
+	if len(failed) > 0 {
+		slog.Warn("node filesystem stats unavailable", "nodes", failed, "error", lastErr.Error())
+	}
+	return out
 }

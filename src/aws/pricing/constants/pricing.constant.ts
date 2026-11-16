@@ -12,3 +12,13 @@ export const PRICING_OS_BY_PLATFORM: Record<string, string> = {
 };
 
 export const DEFAULT_PRICING_OS = 'Linux';
+
+export const RDS_PRICING_ENGINES: Record<string, string> = {
+  postgres: 'PostgreSQL',
+  mysql: 'MySQL',
+  mariadb: 'MariaDB',
+};
+
+export const EC2_SERVICE = 'AmazonEC2';
+
+export const RDS_SERVICE = 'AmazonRDS';

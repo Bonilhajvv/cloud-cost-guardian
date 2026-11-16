@@ -14,3 +14,5 @@ export interface EbsVolume {
   encrypted: boolean;
   tags: Record<string, string>;
 }
+
+export type VolumeShape = Pick<EbsVolume, 'volumeType' | 'sizeGiB' | 'iops' | 'throughputMBps'>;

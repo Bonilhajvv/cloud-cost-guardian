@@ -5,6 +5,11 @@ type Amount struct {
 	MemoryBytes float64 `json:"memoryBytes"`
 }
 
+type Filesystem struct {
+	UsedBytes     float64 `json:"usedBytes"`
+	CapacityBytes float64 `json:"capacityBytes"`
+}
+
 type ReportNode struct {
 	Name         string            `json:"name"`
 	ProviderID   string            `json:"providerId,omitempty"`
@@ -17,6 +22,7 @@ type ReportNode struct {
 	Requests     Amount            `json:"requests"`
 	Limits       Amount            `json:"limits"`
 	Usage        *Amount           `json:"usage,omitempty"`
+	Filesystem   *Filesystem       `json:"filesystem,omitempty"`
 	PodCount     int               `json:"podCount"`
 }
 
@@ -71,10 +77,24 @@ type kubeNode struct {
 		ProviderID string `json:"providerID"`
 	} `json:"spec"`
 	Status struct {
-		Capacity    map[string]string `json:"capacity"`
-		Allocatable map[string]string `json:"allocatable"`
-		Addresses   []nodeAddress     `json:"addresses"`
+		Capacity        map[string]string `json:"capacity"`
+		Allocatable     map[string]string `json:"allocatable"`
+		Addresses       []nodeAddress     `json:"addresses"`
+		DaemonEndpoints struct {
+			KubeletEndpoint struct {
+				Port int `json:"Port"`
+			} `json:"kubeletEndpoint"`
+		} `json:"daemonEndpoints"`
 	} `json:"status"`
+}
+
+type kubeletSummary struct {
+	Node struct {
+		Fs *struct {
+			UsedBytes     *float64 `json:"usedBytes"`
+			CapacityBytes *float64 `json:"capacityBytes"`
+		} `json:"fs"`
+	} `json:"node"`
 }
 
 type container struct {
@@ -146,4 +166,5 @@ type Snapshot struct {
 	HPAs         []kubeHPA
 	NodeMetrics  []nodeMetrics
 	PodMetrics   []podMetrics
+	NodeFS       map[string]Filesystem
 }

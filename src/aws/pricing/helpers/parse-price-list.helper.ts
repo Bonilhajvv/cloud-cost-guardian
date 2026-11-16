@@ -33,3 +33,12 @@ export function parseOnDemandUsd(priceItem: string, unit: string): number | null
 export function hourlyToMonthly(hourly: number): number {
   return Math.round(hourly * HOURS_PER_MONTH * 100) / 100;
 }
+
+export function parseProductAttribute(priceItem: string, attribute: string): string | null {
+  try {
+    const value = asRecord(asRecord(asRecord(JSON.parse(priceItem))?.product)?.attributes)?.[attribute];
+    return typeof value === 'string' ? value : null;
+  } catch {
+    return null;
+  }
+}

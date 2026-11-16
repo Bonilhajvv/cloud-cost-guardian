@@ -163,6 +163,10 @@ func Aggregate(s Snapshot, metricsAvailable bool) ([]ReportNode, []ReportWorkloa
 			u := usage
 			node.Usage = &u
 		}
+		if fs, ok := s.NodeFS[n.Metadata.Name]; ok {
+			f := fs
+			node.Filesystem = &f
+		}
 		nodes = append(nodes, node)
 	}
 	for i := range nodes {

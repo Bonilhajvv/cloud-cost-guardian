@@ -1,8 +1,9 @@
+import { isEc2Analysis } from '../../aws/core/helpers/resource-analysis.helper';
 import { ResourceAnalysis } from '../../aws/core/interfaces/recommendation-draft.interface';
 import { OptionFit } from '../../aws/ec2/interfaces/usage-profile.interface';
 import { RecommendationType } from '../../common/enums';
 import { round } from '../../common/helpers/stats.helper';
-import { REMOVAL_TYPES } from '../constants/recommendation.constant';
+import { COST_INCREASE_TYPES, REMOVAL_TYPES } from '../constants/recommendation.constant';
 import {
   RealizedSource,
   RecommendationResolution,
@@ -12,25 +13,29 @@ import {
 } from '../interfaces/recommendation-metadata.interface';
 
 function configuredType(analysis: ResourceAnalysis): string {
-  return analysis.kind === 'EBS' ? analysis.current.volumeType : analysis.current.instanceType;
+  if (analysis.kind === 'EBS') return analysis.current.volumeType;
+  return analysis.kind === 'RDS' ? analysis.current.instanceClass : analysis.current.instanceType;
 }
 
 function recommendedType(analysis: ResourceAnalysis): string | null {
   if (!analysis.recommendation) return null;
-  return analysis.kind === 'EBS' ? analysis.recommendation.targetVolumeType : analysis.recommendation.instanceType;
+  if (analysis.kind === 'EBS') return analysis.recommendation.targetVolumeType;
+  return analysis.kind === 'RDS' ? analysis.recommendation.instanceClass : analysis.recommendation.instanceType;
 }
 
 function sizeOf(analysis: ResourceAnalysis): (number | null)[] {
-  return analysis.kind === 'EBS' ? [analysis.current.sizeGiB] : [analysis.current.vcpu, analysis.current.memoryGb];
+  if (analysis.kind === 'EBS') return [analysis.current.sizeGiB];
+  return analysis.kind === 'RDS' ? [analysis.current.vcpu] : [analysis.current.vcpu, analysis.current.memoryGb];
 }
 
 function recommendedSizeOf(analysis: ResourceAnalysis): (number | null)[] | null {
   if (analysis.kind === 'EBS') return analysis.recommendation ? [analysis.current.sizeGiB] : null;
+  if (analysis.kind === 'RDS') return null;
   return analysis.recommendation ? [analysis.recommendation.vcpu, analysis.recommendation.memoryGb] : null;
 }
 
 function currentFit(analysis: ResourceAnalysis): OptionFit | null {
-  if (analysis.kind === 'EBS') return null;
+  if (!isEc2Analysis(analysis)) return null;
   return analysis.options?.find((o) => o.kind === 'CURRENT')?.fit ?? null;
 }
 
@@ -73,7 +78,7 @@ export function resolutionFor(previous: ResourceAnalysis | undefined, current: R
   if (!current) return { reason: 'RESOURCE_REMOVED', finding: null, detail: 'Resource no longer found in the latest scan' };
   const finding = current.finding;
   if (previous && typeChanged(previous, current)) return changeResolution(previous, current);
-  if (current.kind === 'EBS') return { reason: 'NO_LONGER_RECOMMENDED', finding, detail: `Latest analysis finding: ${finding}` };
+  if (!isEc2Analysis(current)) return { reason: 'NO_LONGER_RECOMMENDED', finding, detail: `Latest analysis finding: ${finding}` };
 
   if (finding === 'NOT_RUNNING') return { reason: 'NOT_RUNNING', finding, detail: 'Instance is not running' };
   if (finding === 'INSUFFICIENT_DATA') return { reason: 'INSUFFICIENT_DATA', finding, detail: 'Not enough metrics to keep the recommendation' };
@@ -93,7 +98,7 @@ export function resolutionFor(previous: ResourceAnalysis | undefined, current: R
 }
 
 function onDemandMonthly(analysis: ResourceAnalysis): number | null {
-  if (analysis.kind === 'EBS') return analysis.current.monthlyCost;
+  if (!isEc2Analysis(analysis)) return analysis.current.monthlyCost;
   const fromOption = analysis.options?.find((o) => o.kind === 'CURRENT')?.monthlyCost;
   if (fromOption !== undefined && fromOption !== null) return fromOption;
   return analysis.current.costSource === 'ON_DEMAND_PRICE' ? analysis.current.monthlyCost : null;
@@ -108,7 +113,7 @@ function removedResourceSavings(
   if (type !== RecommendationType.EC2_STOPPED) {
     return recCurrentMonthlyCost !== null && recCurrentMonthlyCost > 0 ? { amount: recCurrentMonthlyCost, source: 'RESOURCE_COST' } : null;
   }
-  const volumes = previous && previous.kind !== 'EBS' ? previous.stoppedVolumes : undefined;
+  const volumes = previous && isEc2Analysis(previous) ? previous.stoppedVolumes : undefined;
   if (!volumes) return null;
   const removed = volumes.filter((v) => !isPresent(v.volumeId));
   if (removed.some((v) => v.monthlyCost === null)) return null;
@@ -134,9 +139,9 @@ export function resolutionOutcome(
   const to = onDemandMonthly(current);
   const amount = from !== null && to !== null ? round(from - to) : null;
   const realized =
-    type !== RecommendationType.EC2_UPSIZE && amount !== null && amount > 0 ? { amount, source: 'ON_DEMAND_PRICE' as RealizedSource } : null;
+    !COST_INCREASE_TYPES.includes(type) && amount !== null && amount > 0 ? { amount, source: 'ON_DEMAND_PRICE' as RealizedSource } : null;
   if (resolution.reason === 'APPLIED') return { implemented: true, realized };
-  const fits = resolution.change.currentFit === null ? current.kind === 'EBS' : resolution.change.currentFit === 'FITS' || resolution.change.currentFit === 'TIGHT';
+  const fits = resolution.change.currentFit === null ? !isEc2Analysis(current) : resolution.change.currentFit === 'FITS' || resolution.change.currentFit === 'TIGHT';
   if (realized && fits) return { implemented: true, realized };
   return none;
 }

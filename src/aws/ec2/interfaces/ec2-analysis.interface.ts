@@ -18,6 +18,8 @@ export interface Ec2AnalyzerInput {
   optimizer: Ec2OptimizerRecommendation | null;
   downsizeCandidate: InstanceTypeSpec | null;
   upsizeCandidate?: InstanceTypeSpec | null;
+  moreMemoryCandidate?: InstanceTypeSpec | null;
+  lessMemoryCandidate?: InstanceTypeSpec | null;
   onDemandMonthlyPrices: Record<string, number>;
   typeSpecs?: Record<string, InstanceTypeSpec>;
   externalMemory?: ExternalMemoryStats | null;

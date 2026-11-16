@@ -16,6 +16,7 @@ import { CostReportsService } from '../cost-reports/cost-reports.service';
 import { CostSyncService } from '../cost-reports/cost-sync.service';
 import { AdvisoryLockService } from '../database/advisory-lock.service';
 import { LockResult } from '../database/interfaces/lock-result.interface';
+import { RdsScanService } from './rds-scan.service';
 import { KubernetesMetricsService } from '../kubernetes/kubernetes-metrics.service';
 import { RecommendationsService } from '../recommendations/recommendations.service';
 import { AwsResource } from '../resource-inventory/entities/aws-resource.entity';
@@ -139,6 +140,7 @@ function build() {
       pricingOs: jest.fn(() => 'Linux'),
       getEc2MonthlyPrices: jest.fn().mockResolvedValue({ 'm6i.xlarge': 140.16, 'm6i.large': 70.08 }),
       getEbsMonthlyPricePerGb: jest.fn().mockResolvedValue({ gp2: 0.1, gp3: 0.08 }),
+      getEbsPerformancePrices: jest.fn().mockResolvedValue({ iopsMonth: { gp3: 0.005 }, throughputMBpsMonth: { gp3: 0.04 } }),
     },
     ebs: {
       listVolumes: jest.fn().mockResolvedValue([
@@ -152,7 +154,12 @@ function build() {
     recommendations: { syncDrafts: jest.fn().mockResolvedValue({ created: 1, updated: 0, resolved: 0, skipped: 0 }) },
     locks: { tryWithLock: jest.fn(async (_k: string, fn: () => Promise<unknown>): Promise<LockResult<unknown>> => ({ acquired: true, value: await fn() })) },
     audit: { log: jest.fn() },
-    kubernetesMetrics: { nodeMemoryStats: jest.fn().mockResolvedValue(new Map()), nodesByInstanceIds: jest.fn().mockResolvedValue(new Map()) },
+    rdsScan: {
+      scan: jest.fn().mockResolvedValue({ databases: 0, failures: [] }),
+      syncOptimizer: jest.fn().mockResolvedValue({ regions: {}, recommendations: 0, failures: [] }),
+      analyze: jest.fn().mockResolvedValue({ analyzed: 0, findings: {}, created: 0, updated: 0, resolved: 0, skipped: 0 }),
+    },
+    kubernetesMetrics: { nodeMemoryStats: jest.fn().mockResolvedValue(new Map()), nodeDiskStats: jest.fn().mockResolvedValue(new Map()), nodesByInstanceIds: jest.fn().mockResolvedValue(new Map()) },
   };
   const orchestrator = new ScanOrchestratorService(
     deps.accounts as unknown as AwsAccountsService,
@@ -171,6 +178,7 @@ function build() {
     deps.locks as unknown as AdvisoryLockService,
     deps.audit as unknown as AuditService,
     deps.kubernetesMetrics as unknown as KubernetesMetricsService,
+    deps.rdsScan as unknown as RdsScanService,
   );
   return { orchestrator, deps, store };
 }
@@ -208,7 +216,7 @@ describe('ScanOrchestratorService (EC2 end-to-end flow)', () => {
     expect(currentAnalyses.get('i-123')).toBe(analysis);
 
     const [, ebsTypes, ebsDrafts] = callFor(RecommendationType.EBS_UNUSED);
-    expect(ebsTypes).toEqual([RecommendationType.EBS_UNUSED, RecommendationType.EBS_OPTIMIZATION]);
+    expect(ebsTypes).toEqual([RecommendationType.EBS_UNUSED, RecommendationType.EBS_OPTIMIZATION, RecommendationType.EBS_EXPAND]);
     expect(ebsDrafts).toMatchObject([{ type: RecommendationType.EBS_UNUSED, estimatedMonthlySavings: 10 }]);
 
     const actions = deps.audit.log.mock.calls.map(([e]: [{ action: AuditAction }]) => e.action);
@@ -241,6 +249,39 @@ describe('ScanOrchestratorService (EC2 end-to-end flow)', () => {
 
     expect(deps.ec2.describeInstanceTypes).toHaveBeenCalledWith(account, 'sa-east-1', expect.arrayContaining(['m6i.2xlarge']));
     expect(store.get('i-123')?.upsizeCandidate).toMatchObject({ instanceType: 'm6i.2xlarge', memoryGiB: 32 });
+  });
+
+  it('expands the only volume of an instance whose disk is full, never guessing between several volumes', async () => {
+    const vol = (volumeId: string) => ({ volumeId, arn: `arn:aws:ec2:sa-east-1:111122223333:volume/${volumeId}`, name: null, volumeType: 'gp3', sizeGiB: 100, iops: 3000, throughputMBps: 125, state: 'in-use', attachedInstanceIds: ['i-123'], createTime: '2025-01-01T00:00:00.000Z', region: 'sa-east-1', availabilityZone: 'sa-east-1a', encrypted: true, tags: {} });
+    const scan = async (volumes: ReturnType<typeof vol>[]) => {
+      const { orchestrator, deps } = build();
+      const [[id, m]] = [...(await deps.cloudWatch.getEc2Utilization()).entries()];
+      deps.cloudWatch.getEc2Utilization.mockResolvedValue(new Map([[id, { ...m, disk: { available: true, p95UsedPercent: 90, maxUsedPercent: 96 } }]]));
+      deps.ebs.listVolumes.mockResolvedValue(volumes);
+      await orchestrator.run(account, FULL_SCAN_STEPS, 'MANUAL', 'user-1');
+      return deps.recommendations.syncDrafts.mock.calls[0][2];
+    };
+
+    expect(await scan([vol('vol-1')])).toMatchObject([{ type: RecommendationType.EBS_EXPAND, resourceId: 'vol-1', targetKey: 'EXPAND_VOLUME' }]);
+    expect(await scan([vol('vol-1'), vol('vol-2')])).toEqual([]);
+  });
+
+  it('scans RDS in the regions where Resource Explorer found databases and reports it in every step', async () => {
+    const { orchestrator, deps } = build();
+    const discovered = await deps.resourceExplorer.discover();
+    deps.resourceExplorer.discover.mockResolvedValue({
+      ...discovered,
+      resources: [...discovered.resources, { arn: 'arn:aws:rds:us-east-1:111122223333:db:orders', resourceId: 'orders', service: 'rds', resourceType: 'rds:db', region: 'us-east-1', tags: {} }],
+    });
+    deps.rdsScan.scan.mockResolvedValue({ databases: 1, failures: [] });
+
+    const report = await orchestrator.run(account, FULL_SCAN_STEPS, 'MANUAL', 'user-1');
+
+    expect(deps.rdsScan.scan).toHaveBeenCalledWith(account, ['us-east-1'], expect.any(Date));
+    expect(report.steps.find((s) => s.step === 'RESOURCES')?.details).toMatchObject({ rdsDatabases: 1 });
+    expect(deps.rdsScan.syncOptimizer).toHaveBeenCalledWith(account);
+    expect(deps.rdsScan.analyze).toHaveBeenCalledWith(account);
+    expect(report.steps.find((s) => s.step === 'ANALYSIS')?.details).toHaveProperty('rds');
   });
 
   it('stops and marks the account as ERROR when the resource step fails', async () => {

@@ -1,8 +1,9 @@
 import { Level, RecommendationSource, RecommendationType } from '../../../common/enums';
 import { EbsAnalysis } from '../../ebs/interfaces/ebs-analysis.interface';
 import { Ec2Analysis } from '../../ec2/interfaces/ec2-analysis.interface';
+import { RdsAnalysis } from '../../rds/interfaces/rds-analysis.interface';
 
-export type ResourceAnalysis = Ec2Analysis | EbsAnalysis;
+export type ResourceAnalysis = Ec2Analysis | EbsAnalysis | RdsAnalysis;
 
 export interface RecommendationDraft {
   resourceId: string;

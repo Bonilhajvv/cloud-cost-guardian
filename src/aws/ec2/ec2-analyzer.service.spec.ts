@@ -613,6 +613,93 @@ describe('Ec2AnalyzerService upsize', () => {
   });
 });
 
+describe('Ec2AnalyzerService memory-only changes', () => {
+  const analyzer = new Ec2AnalyzerService();
+  const R6I_LARGE: InstanceTypeSpec = { instanceType: 'r6i.large', vcpu: 2, memoryGiB: 16, architectures: ['x86_64'] };
+  const C6I_LARGE: InstanceTypeSpec = { instanceType: 'c6i.large', vcpu: 2, memoryGiB: 4, architectures: ['x86_64'] };
+  const M6I_XLARGE: InstanceTypeSpec = { instanceType: 'm6i.xlarge', vcpu: 4, memoryGiB: 16, architectures: ['x86_64'] };
+  const prices = { 'm6i.large': 70.08, 'm6i.xlarge': 140.16, 'r6i.large': 91.98, 'c6i.large': 62.05, 'm6i.medium': 35.04 };
+  const large = (cpu: { avg: number; p95: number; max: number }, memP95: number | undefined, extra: Partial<Ec2AnalyzerInput> = {}) =>
+    input({
+      instance: instance({ instanceType: 'm6i.large', vcpu: 2, memoryGiB: 8 }),
+      metrics: metrics(cpu, { memP95 }),
+      costExplorerMonthlyCost: null,
+      optimizer: null,
+      downsizeCandidate: null,
+      upsizeCandidate: M6I_XLARGE,
+      moreMemoryCandidate: R6I_LARGE,
+      lessMemoryCandidate: C6I_LARGE,
+      onDemandMonthlyPrices: prices,
+      ...extra,
+    });
+
+  it('raises only memory when memory does not fit and CPU does', () => {
+    const { analysis, draft } = analyzer.analyze(large({ avg: 20, p95: 40, max: 70 }, 95));
+
+    expect(analysis.finding).toBe('UPSIZE');
+    expect(analysis.options?.find((o) => o.kind === 'MORE_MEMORY')).toMatchObject({ instanceType: 'r6i.large', fit: 'FITS' });
+    expect(draft).toMatchObject({ type: RecommendationType.EC2_UPSIZE, targetKey: 'r6i.large', recommendedMonthlyCost: 91.98 });
+    expect(draft?.description).toContain('Only memory is short: r6i.large keeps 2 vCPU and raises memory to 16 GiB');
+  });
+
+  it('doubles the size when CPU is also busy', () => {
+    const { draft } = analyzer.analyze(large({ avg: 45, p95: 70, max: 85 }, 95));
+
+    expect(draft).toMatchObject({ type: RecommendationType.EC2_UPSIZE, targetKey: 'm6i.xlarge' });
+  });
+
+  it('cuts only memory when CPU is too busy to halve the size but memory is low', () => {
+    const { analysis, draft } = analyzer.analyze(large({ avg: 30, p95: 50, max: 75 }, 25));
+
+    expect(analysis.finding).toBe('RIGHTSIZE');
+    expect(analysis.reduction).toEqual({ vcpu: { from: 2, to: 2 }, memoryGb: { from: 8, to: 4 } });
+    expect(draft).toMatchObject({
+      type: RecommendationType.EC2_RIGHTSIZING,
+      source: RecommendationSource.CCG_HEURISTIC,
+      targetKey: 'c6i.large',
+      currentMonthlyCost: 70.08,
+      estimatedMonthlySavings: 8.03,
+      risk: Level.LOW,
+    });
+    expect(analysis.recommendation?.reasons).toContain('c6i.large keeps 2 vCPU with 4 GiB: projected memory P95 50%');
+  });
+
+  it('prefers halving the size when CPU allows it', () => {
+    const M6I_MEDIUM: InstanceTypeSpec = { instanceType: 'm6i.medium', vcpu: 1, memoryGiB: 4, architectures: ['x86_64'] };
+    const { draft } = analyzer.analyze(large({ avg: 10, p95: 20, max: 40 }, 25, { downsizeCandidate: M6I_MEDIUM }));
+
+    expect(draft?.targetKey).toBe('m6i.medium');
+  });
+
+  it('never cuts memory without memory metrics', () => {
+    const { analysis, draft } = analyzer.analyze(large({ avg: 30, p95: 50, max: 75 }, undefined));
+
+    expect(analysis.options?.find((o) => o.kind === 'LESS_MEMORY')?.fit).toBe('UNKNOWN');
+    expect(draft).toBeNull();
+  });
+
+  it('keeps memory when the smaller memory would be tight', () => {
+    const { draft } = analyzer.analyze(large({ avg: 30, p95: 50, max: 75 }, 45));
+
+    expect(draft).toBeNull();
+  });
+
+  it('never cuts memory below the Kubernetes worker floor', () => {
+    const tiny = { ...C6I_LARGE, memoryGiB: 1 };
+    const plain = analyzer.analyze(large({ avg: 30, p95: 50, max: 75 }, 5, { lessMemoryCandidate: tiny }));
+    const node = analyzer.analyze(
+      large({ avg: 30, p95: 50, max: 75 }, 5, {
+        instance: instance({ instanceType: 'm6i.large', vcpu: 2, memoryGiB: 8, tags: { 'kubernetes.io/cluster/prd': 'owned' } }),
+        lessMemoryCandidate: tiny,
+      }),
+    );
+
+    expect(plain.draft?.targetKey).toBe('c6i.large');
+    expect(node.analysis.options?.find((o) => o.kind === 'LESS_MEMORY')?.fit).toBe('DOES_NOT_FIT');
+    expect(node.draft).toBeNull();
+  });
+});
+
 describe('upsizeCandidateType', () => {
   it.each([
     ['t3a.small', 't3a.medium'],
