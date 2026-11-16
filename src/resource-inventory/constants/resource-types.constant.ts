@@ -4,6 +4,13 @@ export const EBS_VOLUME_RESOURCE_TYPE = 'ec2:volume';
 
 export const RDS_DB_INSTANCE_RESOURCE_TYPE = 'rds:db';
 
+export const NETWORK_RESOURCE_TYPES = {
+  EIP: 'ec2:elastic-ip',
+  NAT: 'ec2:natgateway',
+  LB: 'elasticloadbalancing:loadbalancer',
+  VPC: 'ec2:vpc',
+} as const;
+
 export const UPSERT_CHUNK_SIZE = 500;
 
 export const MEMORY_COVERAGE_HINT =

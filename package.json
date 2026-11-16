@@ -25,6 +25,7 @@
     "@aws-sdk/client-compute-optimizer": "^3.1163.0",
     "@aws-sdk/client-cost-explorer": "^3.1163.0",
     "@aws-sdk/client-ec2": "^3.1163.0",
+    "@aws-sdk/client-elastic-load-balancing-v2": "^3.1170.0",
     "@aws-sdk/client-pricing": "^3.1163.0",
     "@aws-sdk/client-rds": "^3.1169.0",
     "@aws-sdk/client-resource-explorer-2": "^3.1163.0",

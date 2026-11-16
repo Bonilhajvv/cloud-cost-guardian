@@ -6,14 +6,18 @@ import { toAwsIntegrationError } from '../core/errors/aws-integration.error';
 import {
   DEFAULT_PRICING_OS,
   EC2_SERVICE,
+  ELB_SERVICE,
   PRICE_CACHE_TTL_MS,
   PRICING_API_REGION,
   PRICING_OS_BY_PLATFORM,
   RDS_PRICING_ENGINES,
   RDS_SERVICE,
+  VPC_SERVICE,
 } from './constants/pricing.constant';
 import { hourlyToMonthly, parseOnDemandHourlyUsd, parseOnDemandUsd, parseProductAttribute } from './helpers/parse-price-list.helper';
 import { RdsDeployment, RdsExtendedSupportYear, RdsInstancePrice } from './interfaces/rds-price.interface';
+import { NetworkPrices } from '../network/interfaces/network.interface';
+import { LOAD_BALANCER_PRICING_FAMILIES } from '../network/constants/network.constant';
 import { CachedPrice, OnDemandPriceQuery, PriceFilter } from './interfaces/on-demand-price.interface';
 import { EbsPerformancePrices } from './interfaces/ebs-performance-price.interface';
 
@@ -139,12 +143,42 @@ export class PricingService {
     ], (item) => parseOnDemandUsd(item, 'vCPU-hour'));
   }
 
+  async getNetworkPrices(region: string): Promise<NetworkPrices> {
+    const hourly = (usage: RegExp) => (item: string) => {
+      const type = parseProductAttribute(item, 'usagetype');
+      return type && usage.test(type) ? parseOnDemandHourlyUsd(item) : null;
+    };
+    const publicIpv4Hourly = await this.lookup<number>(VPC_SERVICE, `ipv4|${region}`, { region, product: 'public-ipv4' }, [
+      { Type: 'TERM_MATCH', Field: 'regionCode', Value: region },
+      { Type: 'TERM_MATCH', Field: 'group', Value: 'VPCPublicIPv4Address' },
+    ], hourly(/^([A-Z]+\d+-)?PublicIPv4:InUseAddress$/), 100);
+    const natFilters: PriceFilter[] = [
+      { Type: 'TERM_MATCH', Field: 'productFamily', Value: 'NAT Gateway' },
+      { Type: 'TERM_MATCH', Field: 'regionCode', Value: region },
+    ];
+    const natGatewayHourly = await this.lookup<number>(EC2_SERVICE, `nat-hours|${region}`, { region, product: 'nat-hours' }, natFilters, hourly(/^([A-Z]+\d+-)?NatGateway-Hours$/), 100);
+    const natGatewayPerGb = await this.lookup<number>(EC2_SERVICE, `nat-gb|${region}`, { region, product: 'nat-gb' }, natFilters, (item) => {
+      const type = parseProductAttribute(item, 'usagetype');
+      return type && /^([A-Z]+\d+-)?NatGateway-Bytes$/.test(type) ? parseOnDemandUsd(item, 'GB') : null;
+    }, 100);
+    const loadBalancerHourly: Record<string, number> = {};
+    for (const [type, family] of Object.entries(LOAD_BALANCER_PRICING_FAMILIES)) {
+      const price = await this.lookup<number>(ELB_SERVICE, `lb|${region}|${type}`, { region, product: family }, [
+        { Type: 'TERM_MATCH', Field: 'productFamily', Value: family },
+        { Type: 'TERM_MATCH', Field: 'regionCode', Value: region },
+      ], hourly(/^([A-Z]+\d+-)?LoadBalancerUsage$/), 100);
+      if (price !== null) loadBalancerHourly[type] = price;
+    }
+    return { publicIpv4Hourly, natGatewayHourly, natGatewayPerGb, loadBalancerHourly };
+  }
+
   private async lookup<T>(
     serviceCode: string,
     key: string,
     query: Record<string, string>,
     filters: PriceFilter[],
     parse: (item: string) => T | null,
+    maxResults = 10,
   ): Promise<T | null> {
     const cached = this.cache.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.value as T | null;
@@ -153,7 +187,7 @@ export class PricingService {
     let monthly: T | null = null;
     try {
       const { PriceList } = await this.client.send(
-        new GetProductsCommand({ ServiceCode: serviceCode, MaxResults: 10, Filters: filters }),
+        new GetProductsCommand({ ServiceCode: serviceCode, MaxResults: maxResults, Filters: filters }),
       );
       const items = Array.isArray(PriceList) ? PriceList.map(String) : [];
       monthly = items.map(parse).find((p): p is T => p !== null) ?? null;

@@ -1,4 +1,5 @@
 import { CommitmentSnapshot } from '../../aws/costs/interfaces/commitment.interface';
+import { NetworkSnapshot } from '../../aws/network/interfaces/network.interface';
 import {
   Column,
   CreateDateColumn,
@@ -65,6 +66,9 @@ export class AwsAccount {
 
   @Column({ type: 'jsonb', nullable: true })
   commitments: CommitmentSnapshot | null;
+
+  @Column({ type: 'jsonb', nullable: true })
+  network: NetworkSnapshot | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;

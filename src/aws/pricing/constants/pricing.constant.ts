@@ -22,3 +22,7 @@ export const RDS_PRICING_ENGINES: Record<string, string> = {
 export const EC2_SERVICE = 'AmazonEC2';
 
 export const RDS_SERVICE = 'AmazonRDS';
+
+export const ELB_SERVICE = 'AWSELB';
+
+export const VPC_SERVICE = 'AmazonVPC';

@@ -43,3 +43,35 @@ describe('PricingService RDS prices', () => {
     expect(send.mock.calls[0][0].input.Filters).toContainEqual({ Type: 'TERM_MATCH', Field: 'deploymentOption', Value: 'Single-AZ' });
   });
 });
+
+describe('PricingService network prices', () => {
+  const product = (usagetype: string, unit: string, usd: string) =>
+    JSON.stringify({ product: { attributes: { usagetype } }, terms: { OnDemand: { t: { priceDimensions: { d: { unit, pricePerUnit: { USD: usd } } } } } } });
+
+  it('picks the plain hourly items among regional NAT, LCU and TS load balancer variants', async () => {
+    const service = new PricingService({ get: () => 3 } as unknown as ConfigService<never, true>);
+    const send = jest.fn(async (command: { input: { ServiceCode: string; MaxResults: number; Filters: { Field: string; Value: string }[] } }) => {
+      const family = command.input.Filters.find((f) => f.Field === 'productFamily')?.Value;
+      if (command.input.ServiceCode === 'AmazonVPC') return { PriceList: [product('USE2-PublicIPv4:IdleAddress', 'Hrs', '0.006'), product('USE2-PublicIPv4:InUseAddress', 'Hrs', '0.005')] };
+      if (family === 'NAT Gateway')
+        return {
+          PriceList: [
+            product('USE2-RegionalNatGateway-Hours', 'Hrs', '0.09'),
+            product('NatGateway-Prvd-Gbps', 'Gbps-hrs', '1.076'),
+            product('USE2-NatGateway-Bytes', 'GB', '0.045'),
+            product('USE2-NatGateway-Hours', 'Hrs', '0.045'),
+          ],
+        };
+      return { PriceList: [product('USE2-TS-LoadBalancerUsage', 'Hrs', '0.005'), product('USE2-LCUUsage', 'LCU-Hrs', '0.008'), product('USE2-LoadBalancerUsage', 'Hrs', '0.0225')] };
+    });
+    Object.assign(service, { client: { send } });
+
+    expect(await service.getNetworkPrices('us-east-2')).toEqual({
+      publicIpv4Hourly: 0.005,
+      natGatewayHourly: 0.045,
+      natGatewayPerGb: 0.045,
+      loadBalancerHourly: { application: 0.0225, network: 0.0225 },
+    });
+    expect(send.mock.calls.every(([c]) => c.input.MaxResults === 100)).toBe(true);
+  });
+});

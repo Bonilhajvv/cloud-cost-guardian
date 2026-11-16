@@ -36,6 +36,7 @@ import { DEFAULT_CURRENCY, FATAL_STEPS, METRICS_PERIOD_DAYS, scanLockKey } from 
 import { groupByRegion } from './helpers/group-by-region.helper';
 import { instanceDiskUsage } from './helpers/instance-disk-usage.helper';
 import { CommitmentSyncService } from './commitment-sync.service';
+import { NetworkScanService } from './network-scan.service';
 import { RdsScanService } from './rds-scan.service';
 import {
   AnalysisDetails,
@@ -70,6 +71,7 @@ export class ScanOrchestratorService {
     private readonly kubernetesMetrics: KubernetesMetricsService,
     private readonly rdsScan: RdsScanService,
     private readonly commitmentSync: CommitmentSyncService,
+    private readonly networkScan: NetworkScanService,
   ) {}
 
   async run(account: AwsAccount, steps: readonly ScanStep[], trigger: ScanTrigger, userId?: string): Promise<ScanReport> {
@@ -223,6 +225,8 @@ export class ScanOrchestratorService {
         ...instances.map((i) => i.region),
       ].filter((r): r is string => !!r && r !== 'global')),
     ].sort();
+    const network = await this.networkScan.scan(account, discovery.mode === 'UNAVAILABLE' ? rdsRegions : regions, seenAt);
+    failures.push(...network.failures);
     const staleRemoved = failures.length === 0 ? await this.inventory.removeStale(account.id, seenAt) : 0;
     await this.accounts.markSynced(account.id, 'lastScanAt', { regions });
     account.regions = regions;
@@ -234,6 +238,7 @@ export class ScanOrchestratorService {
       ec2Instances: instances.length,
       ebsVolumes,
       rdsDatabases: rds.databases,
+      network,
       regions,
       failures,
       staleRemoved,
@@ -434,14 +439,15 @@ export class ScanOrchestratorService {
     const sync = await this.recommendations.syncDrafts(account, EC2_RECOMMENDATION_TYPES, drafts, new Map([...volumes.analyses, ...analyses]));
     this.logger.log({ msg: 'EC2 analysis finished', awsAccountRef: account.id, analyzed, findings, drafts: drafts.length });
     const rdsDetails = await this.rdsScan.analyze(account);
-    return { analyzed, findings, ...sync, ebs: volumes.details, rds: rdsDetails };
+    const networkDetails = await this.networkScan.analyze(account);
+    return { analyzed, findings, ...sync, ebs: volumes.details, rds: rdsDetails, network: networkDetails };
   }
 
   private async analyzeVolumes(
     account: AwsAccount,
     stoppedInstanceIds: ReadonlySet<string>,
     diskByInstance: ReadonlyMap<string, InstanceDiskUsage>,
-  ): Promise<{ details: Omit<AnalysisDetails, 'ebs'>; analyses: Map<string, ResourceAnalysis> }> {
+  ): Promise<{ details: Omit<AnalysisDetails, 'ebs' | 'rds' | 'network'>; analyses: Map<string, ResourceAnalysis> }> {
     const resources = await this.inventory.findByType(account.id, EBS_VOLUME_RESOURCE_TYPE);
     const drafts: RecommendationDraft[] = [];
     const analyses = new Map<string, ResourceAnalysis>();

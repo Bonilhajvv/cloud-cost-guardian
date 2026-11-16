@@ -22,6 +22,8 @@ import { buildDailyUsage } from './helpers/build-daily-usage.helper';
 import { buildEbsUtilization } from './helpers/build-ebs-utilization.helper';
 import { buildRdsUtilization } from './helpers/build-rds-utilization.helper';
 import { RdsUtilizationMetrics } from './interfaces/rds-metrics.interface';
+import { NetworkUsage } from '../network/interfaces/network.interface';
+import { MetricSumQuery } from './interfaces/metric-sum-query.interface';
 import { buildUtilization } from './helpers/build-utilization.helper';
 import { EbsUtilizationMetrics, MetricQuerySpec, TimeSeries } from './interfaces/ebs-metrics.interface';
 import { EbsQueryKind, QueryKind, RdsQueryKind } from './interfaces/metric-query-kind.type';
@@ -172,6 +174,26 @@ export class CloudWatchService {
     });
     for (const [id, g] of grouped) result.set(id, buildRdsUtilization(g, periodDays, end));
     this.logger.log({ msg: 'RDS utilization collected', region, databases: dbInstanceIds.length });
+    return result;
+  }
+
+  async getMetricSums(account: AwsAccountRef, region: string, queries: readonly MetricSumQuery[], periodDays = 14): Promise<Map<string, NetworkUsage>> {
+    const result = new Map<string, NetworkUsage>();
+    if (queries.length === 0) return result;
+    const client = await this.clients.createClient(CloudWatchClient, account, region);
+    const specs: MetricQuerySpec<'sum'>[] = queries.map((q) => ({ ...q, kind: 'sum', stat: 'Sum', period: DAY }));
+    const end = new Date();
+    const series = await this.fetch(client, specs, new Date(end.getTime() - periodDays * DAY * 1000), end, region);
+    series.forEach((s, i) => {
+      const id = specs[i].ownerId;
+      const previous = result.get(id);
+      const total = s.values.length ? s.values.reduce((a, b) => a + b, 0) : null;
+      result.set(id, {
+        periodDays,
+        total: previous?.total === null || previous === undefined ? total : total === null ? previous.total : previous.total + total,
+        datapoints: Math.max(previous?.datapoints ?? 0, s.values.length),
+      });
+    });
     return result;
   }
 

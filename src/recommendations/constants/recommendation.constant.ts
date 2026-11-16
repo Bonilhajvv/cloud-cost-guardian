@@ -31,6 +31,13 @@ export const EBS_RECOMMENDATION_TYPES = [
   RecommendationType.EBS_EXPAND,
 ] as const;
 
+export const NETWORK_RECOMMENDATION_TYPES = [
+  RecommendationType.EIP_UNUSED,
+  RecommendationType.NAT_GATEWAY_IDLE,
+  RecommendationType.LOAD_BALANCER_IDLE,
+  RecommendationType.VPC_ENDPOINT_MISSING,
+] as const;
+
 export const COMMITMENT_RECOMMENDATION_TYPES = [
   RecommendationType.SAVINGS_PLAN_PURCHASE,
   RecommendationType.RESERVED_INSTANCE_PURCHASE,
@@ -42,6 +49,7 @@ export const RDS_RECOMMENDATION_TYPES = [
   RecommendationType.RDS_IDLE,
   RecommendationType.RDS_MULTI_AZ,
   RecommendationType.RDS_EXTENDED_SUPPORT,
+  RecommendationType.RDS_PUBLIC_ACCESS,
 ] as const;
 
 export const OPPORTUNITY_LABELS: Record<RecommendationType, string> = {
@@ -60,10 +68,15 @@ export const OPPORTUNITY_LABELS: Record<RecommendationType, string> = {
   [RecommendationType.RDS_EXTENDED_SUPPORT]: 'RDS',
   [RecommendationType.SAVINGS_PLAN_PURCHASE]: 'Savings Plans',
   [RecommendationType.RESERVED_INSTANCE_PURCHASE]: 'Reserved Instances',
+  [RecommendationType.EIP_UNUSED]: 'Idle Resources',
+  [RecommendationType.NAT_GATEWAY_IDLE]: 'Idle Resources',
+  [RecommendationType.LOAD_BALANCER_IDLE]: 'Idle Resources',
+  [RecommendationType.VPC_ENDPOINT_MISSING]: 'Network',
+  [RecommendationType.RDS_PUBLIC_ACCESS]: 'RDS',
   [RecommendationType.LAMBDA_RIGHTSIZING]: 'Lambda',
 };
 
-export const REMOVAL_TYPES: readonly RecommendationType[] = [RecommendationType.EC2_IDLE, RecommendationType.EBS_UNUSED, RecommendationType.EC2_STOPPED, RecommendationType.RDS_IDLE];
+export const REMOVAL_TYPES: readonly RecommendationType[] = [RecommendationType.EC2_IDLE, RecommendationType.EBS_UNUSED, RecommendationType.EC2_STOPPED, RecommendationType.RDS_IDLE, RecommendationType.EIP_UNUSED, RecommendationType.NAT_GATEWAY_IDLE, RecommendationType.LOAD_BALANCER_IDLE];
 
 export const COST_INCREASE_TYPES: readonly RecommendationType[] = [RecommendationType.EC2_UPSIZE, RecommendationType.EBS_EXPAND, RecommendationType.RDS_UPSIZE];
 

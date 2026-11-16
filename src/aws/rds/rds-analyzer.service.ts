@@ -78,7 +78,7 @@ export class RdsAnalyzerService {
     const idle = this.idle(analysis, input, monthlyCost);
     const opportunities = idle
       ? [idle]
-      : [this.resize(analysis, input), this.multiAz(analysis, input), this.extendedSupport(analysis, input, extendedSupportCost, now)].filter(
+      : [this.resize(analysis, input), this.multiAz(analysis, input), this.extendedSupport(analysis, input, extendedSupportCost, now), this.publicAccess(input)].filter(
           (o): o is Opportunity => o !== null,
         );
     if (!idle) this.supportEndingSoon(analysis, input, now);
@@ -232,6 +232,28 @@ export class RdsAnalyzerService {
       description: `${reasons.join('. ')}. Estimated savings: ${this.savingsText(cost, input.currency)}.`,
       monthlySavings: cost,
       risk: Level.HIGH,
+      confidence: Level.HIGH,
+    };
+  }
+
+  private publicAccess(input: RdsAnalyzerInput): Opportunity | null {
+    const { instance, prices } = input;
+    if (!instance.publiclyAccessible) return null;
+    const savings = prices?.publicIpv4Monthly ?? null;
+    const reasons = [
+      `${instance.dbInstanceId} is publicly accessible: its endpoint resolves to a public IPv4 address reachable from the internet, limited only by security groups`,
+      `AWS charges the public IPv4 address${savings === null ? '' : ` (${input.currency} ${round(savings)}/month)`}`,
+      'Make it private (ModifyDBInstance --no-publicly-accessible) and reach it from inside the VPC, a VPN or an SSM/bastion tunnel',
+      'Clients that connect from outside the VPC stop working: check them before the change',
+    ];
+    return {
+      type: RecommendationType.RDS_PUBLIC_ACCESS,
+      targetKey: 'PRIVATE',
+      title: `Make RDS ${instance.dbInstanceId} private`,
+      description: `${reasons.join('. ')}. Estimated savings: ${this.savingsText(savings, input.currency)}.`,
+      monthlySavings: savings,
+      severity: Level.MEDIUM,
+      risk: Level.MEDIUM,
       confidence: Level.HIGH,
     };
   }

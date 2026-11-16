@@ -4,6 +4,7 @@ import { CostReportsService } from '../cost-reports/cost-reports.service';
 import { RecommendationsService } from '../recommendations/recommendations.service';
 import { ResourceInventoryService } from '../resource-inventory/resource-inventory.service';
 import { commitmentsOverview } from './helpers/commitments-overview.helper';
+import { publicIpv4Overview } from './helpers/public-ipv4-overview.helper';
 import { DashboardSummary } from './interfaces/dashboard-summary.interface';
 
 @Injectable()
@@ -33,6 +34,7 @@ export class DashboardService {
       resources,
       metricsCoverage,
       commitments: commitmentsOverview(commitments),
+      publicIpv4: publicIpv4Overview(commitments.map((a) => a.network)),
     };
   }
 }

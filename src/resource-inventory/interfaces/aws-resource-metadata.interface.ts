@@ -8,6 +8,7 @@ import { EbsPerformancePrices } from '../../aws/pricing/interfaces/ebs-performan
 import { RdsUtilizationMetrics } from '../../aws/metrics/interfaces/rds-metrics.interface';
 import { RdsOptimizerRecommendation } from '../../aws/optimizer/interfaces/rds-optimizer.interface';
 import { RdsPrices } from '../../aws/rds/interfaces/rds-analysis.interface';
+import { NetworkPrices, NetworkResource } from '../../aws/network/interfaces/network.interface';
 import { RdsEngineLifecycle, RdsInstance } from '../../aws/rds/interfaces/rds-instance.interface';
 
 export interface KubernetesNodeLink {
@@ -44,5 +45,7 @@ export interface AwsResourceMetadata {
   rdsLifecycle?: RdsEngineLifecycle | null;
   rdsExtendedSupportHourlyPerVcpu?: number | null;
   rdsOptimizer?: RdsOptimizerRecommendation | null;
+  network?: NetworkResource;
+  networkPrices?: NetworkPrices | null;
   analysis?: ResourceAnalysis;
 }

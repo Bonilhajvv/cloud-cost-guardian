@@ -16,6 +16,8 @@ import { RDS_DB_INSTANCE_RESOURCE_TYPE } from '../resource-inventory/constants/r
 import { rdsToResourceData } from '../resource-inventory/helpers/rds-to-resource-data.helper';
 import { ResourceInventoryService } from '../resource-inventory/resource-inventory.service';
 import { DEFAULT_CURRENCY, METRICS_PERIOD_DAYS } from './constants/scan.constant';
+import { HOURS_PER_MONTH } from '../aws/pricing/constants/pricing.constant';
+import { round } from '../common/helpers/stats.helper';
 import { groupByRegion } from './helpers/group-by-region.helper';
 import { AnalysisDetails, OptimizerSyncDetails, RdsScanDetails } from './interfaces/scan-report.interface';
 
@@ -62,7 +64,7 @@ export class RdsScanService {
     return { regions, recommendations: total, failures: run.failures };
   }
 
-  async analyze(account: AwsAccount): Promise<Omit<AnalysisDetails, 'ebs' | 'rds'>> {
+  async analyze(account: AwsAccount): Promise<Omit<AnalysisDetails, 'ebs' | 'rds' | 'network'>> {
     const resources = await this.inventory.findByType(account.id, RDS_DB_INSTANCE_RESOURCE_TYPE);
     const drafts: RecommendationDraft[] = [];
     const analyses = new Map<string, ResourceAnalysis>();
@@ -106,6 +108,8 @@ export class RdsScanService {
     const metrics = await this.cloudWatch.getRdsUtilization(account, region, databases.map((d) => d.dbInstanceId), METRICS_PERIOD_DAYS);
     const lifecycles = await this.lifecycles(account, region, databases.map((d) => d.engine));
     const now = new Date();
+    const ipv4Hourly = (await this.pricing.getNetworkPrices(region)).publicIpv4Hourly;
+    const publicIpv4Monthly = ipv4Hourly === null ? null : round(ipv4Hourly * HOURS_PER_MONTH);
     for (const db of databases) {
       const lifecycle = lifecycleFor(db.engine, db.engineVersion, lifecycles);
       const deployment = db.multiAz ? 'Multi-AZ' : 'Single-AZ';
@@ -119,7 +123,7 @@ export class RdsScanService {
         rds: db,
         tags: db.tags,
         rdsMetrics: metrics.get(db.dbInstanceId) ?? null,
-        rdsPrices: { deployment, byClass, singleAz },
+        rdsPrices: { deployment, byClass, singleAz, publicIpv4Monthly },
         rdsLifecycle: lifecycle,
         rdsExtendedSupportHourlyPerVcpu: extendedSupport,
       });

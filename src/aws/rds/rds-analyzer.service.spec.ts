@@ -203,6 +203,14 @@ describe('RdsAnalyzerService', () => {
     expect((result.analysis as RdsAnalysis).savings).toEqual({ monthly: 401.5, yearly: 4818, currency: 'USD' });
   });
 
+  it('recommends making a publicly accessible database private', () => {
+    const result = analyzer.analyze(input({ instance: db({ publiclyAccessible: true }), prices: { ...PRICES, publicIpv4Monthly: 3.65 } }));
+
+    expect(result.drafts).toHaveLength(1);
+    expect(result.drafts[0]).toMatchObject({ type: RecommendationType.RDS_PUBLIC_ACCESS, estimatedMonthlySavings: 3.65, severity: Level.MEDIUM, targetKey: 'PRIVATE', title: 'Make RDS orders-prd private' });
+    expect(result.drafts[0].description).toContain('--no-publicly-accessible');
+  });
+
   it('skips Aurora members and databases that are not available', () => {
     expect(analyzer.analyze(input({ instance: db({ engine: 'aurora-postgresql', clusterId: 'c1' }) })).analysis.finding).toBe('NOT_ANALYZED');
     expect(analyzer.analyze(input({ instance: db({ status: 'stopped' }), optimizer: optimizer({ idle: true }) }))).toMatchObject({

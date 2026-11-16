@@ -3,8 +3,9 @@ import { EbsAnalysis } from '../../ebs/interfaces/ebs-analysis.interface';
 import { Ec2Analysis } from '../../ec2/interfaces/ec2-analysis.interface';
 import { RdsAnalysis } from '../../rds/interfaces/rds-analysis.interface';
 import { CommitmentAnalysis } from '../../commitments/interfaces/commitment-analysis.interface';
+import { NetworkAnalysis } from '../../network/interfaces/network-analysis.interface';
 
-export type ResourceAnalysis = Ec2Analysis | EbsAnalysis | RdsAnalysis | CommitmentAnalysis;
+export type ResourceAnalysis = Ec2Analysis | EbsAnalysis | RdsAnalysis | CommitmentAnalysis | NetworkAnalysis;
 
 export interface RecommendationDraft {
   resourceId: string;

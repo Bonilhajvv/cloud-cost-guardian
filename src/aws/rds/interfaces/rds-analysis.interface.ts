@@ -11,6 +11,7 @@ export interface RdsPrices {
   deployment: RdsDeployment;
   byClass: Record<string, RdsInstancePrice>;
   singleAz: RdsInstancePrice | null;
+  publicIpv4Monthly?: number | null;
 }
 
 export interface RdsAnalyzerInput {

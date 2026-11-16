@@ -1,6 +1,7 @@
 import { CostSummary } from '../../cost-reports/interfaces/cost-report.interface';
 import { SavingsSummary, TopOpportunity } from '../../recommendations/interfaces/savings-summary.interface';
 import { CommitmentsOverview } from './commitments-overview.interface';
+import { PublicIpv4Overview } from './public-ipv4-overview.interface';
 import { MetricsCoverage } from '../../resource-inventory/interfaces/metrics-coverage.interface';
 
 export interface DashboardSummary {
@@ -11,4 +12,5 @@ export interface DashboardSummary {
   resources: { total: number; ec2: number };
   metricsCoverage: MetricsCoverage;
   commitments: CommitmentsOverview;
+  publicIpv4: PublicIpv4Overview;
 }

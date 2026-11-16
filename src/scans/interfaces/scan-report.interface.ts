@@ -27,6 +27,7 @@ export interface ResourceScanDetails {
   ec2Instances: number;
   ebsVolumes: number;
   rdsDatabases: number;
+  network?: NetworkScanDetails;
   regions: string[];
   failures: RegionFailure[];
   staleRemoved: number;
@@ -45,8 +46,9 @@ export interface RdsScanDetails {
 }
 
 export interface AnalysisDetails {
-  ebs?: Omit<AnalysisDetails, 'ebs' | 'rds'>;
-  rds?: Omit<AnalysisDetails, 'ebs' | 'rds'>;
+  ebs?: Omit<AnalysisDetails, 'ebs' | 'rds' | 'network'>;
+  rds?: Omit<AnalysisDetails, 'ebs' | 'rds' | 'network'>;
+  network?: Omit<AnalysisDetails, 'ebs' | 'rds' | 'network'>;
   analyzed: number;
   findings: Record<string, number>;
   created: number;
@@ -64,4 +66,13 @@ export interface CommitmentSyncDetails {
   resolved: number;
   skipped: number;
   error?: string;
+}
+
+export interface NetworkScanDetails {
+  elasticIps: number;
+  natGateways: number;
+  loadBalancers: number;
+  publicIpv4: number;
+  unavailable: string[];
+  failures: RegionFailure[];
 }

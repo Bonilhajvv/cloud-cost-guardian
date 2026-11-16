@@ -6,6 +6,7 @@ export interface RdsInstance {
   engine: string;
   engineVersion: string;
   multiAz: boolean;
+  publiclyAccessible?: boolean;
   storageType: string | null;
   allocatedStorageGb: number | null;
   status: string;

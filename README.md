@@ -11,13 +11,13 @@ Stack: Node 20+/22, NestJS 11, TypeScript 5.9, PostgreSQL 16, TypeORM 0.3, AWS S
 | Camada | Pergunta | Onde |
 |---|---|---|
 | Resource Explorer | O que existe? | `src/aws/resources` |
-| EC2 / EBS / RDS API | O que é esse recurso? | `src/aws/ec2`, `src/aws/ebs`, `src/aws/rds` |
+| EC2 / EBS / RDS / rede | O que é esse recurso? | `src/aws/ec2`, `src/aws/ebs`, `src/aws/rds`, `src/aws/network` |
 | CloudWatch | Quanto usa? | `src/aws/metrics` |
 | Cost Explorer | Quanto custa? | `src/aws/costs` + snapshots em `src/cost-reports` |
 | Compute Optimizer | A AWS recomenda algo? | `src/aws/optimizer` |
 | Cost Explorer (compromissos) | Vale comprar Savings Plans ou RI? | `src/aws/costs` + `src/aws/commitments` |
 | Pricing API | Quanto custaria on-demand? | `src/aws/pricing` (identidade da plataforma, cache 24h) |
-| Analyzers | O que mostrar ao usuário? | `ec2-analyzer`, `ebs-analyzer`, `rds-analyzer` (puros, sem I/O) |
+| Analyzers | O que mostrar ao usuário? | `ec2-analyzer`, `ebs-analyzer`, `rds-analyzer`, `network-analyzer`, `commitment-analyzer` (puros, sem I/O) |
 
 Fluxo do scan (`src/scans/scan-orchestrator.service.ts`; o RDS fica em `src/scans/rds-scan.service.ts`):
 
@@ -26,6 +26,7 @@ RESOURCES  Resource Explorer (fallback: DescribeRegions + DescribeInstances) →
            → DescribeInstances/DescribeInstanceTypes → CloudWatch → metadata.ec2/metrics
            → DescribeVolumes → CloudWatch EBS → preços por GB, IOPS e throughput
            → DescribeDBInstances → CloudWatch RDS → ciclo de vida da engine → preços RDS
+           → Elastic IPs, NAT Gateways, load balancers, gateway endpoints e IPv4 público por ENI → CloudWatch → aws_accounts.network
 COSTS      GetCostAndUsage (mensal/diário por serviço) + WithResources (14d EC2) + Forecast → CostSnapshot
            → Savings Plans e RI de RDS (recomendação, cobertura e utilização, no máximo 1x por dia) → aws_accounts.commitments
 OPTIMIZER  GetEC2InstanceRecommendations e GetRDSDatabaseRecommendations por região
@@ -64,7 +65,7 @@ Guards globais em `src/common/guards`: `JwtAuthGuard` → `RolesGuard` → `Tena
 4. `POST /aws-accounts/:id/test-connection` roda AssumeRole + GetCallerIdentity, valida o account id e avisa se a trust policy não exige ExternalId.
 5. `POST /aws-accounts/:id/scan` dispara o scan completo (202, assíncrono).
 
-A policy read-only inclui `rds:DescribeDBInstances`, `rds:DescribeDBMajorEngineVersions`, `compute-optimizer:GetRDSDatabaseRecommendations` e as leituras de compromissos do Cost Explorer (`ce:GetSavingsPlansPurchaseRecommendation`, `ce:GetSavingsPlansCoverage`, `ce:GetSavingsPlansUtilization`, `ce:GetReservationPurchaseRecommendation`, `ce:GetReservationUtilization`). Contas conectadas antes desses módulos precisam atualizar a stack. Até lá, o scan registra um aviso e segue sem esses dados, sem falhar.
+A policy read-only inclui `rds:DescribeDBInstances`, `rds:DescribeDBMajorEngineVersions`, `compute-optimizer:GetRDSDatabaseRecommendations` `ec2:DescribeAddresses`, `ec2:DescribeNatGateways`, `ec2:DescribeVpcEndpoints`, `ec2:DescribeNetworkInterfaces`, `elasticloadbalancing:DescribeLoadBalancers` e as leituras de compromissos do Cost Explorer (`ce:GetSavingsPlansPurchaseRecommendation`, `ce:GetSavingsPlansCoverage`, `ce:GetSavingsPlansUtilization`, `ce:GetReservationPurchaseRecommendation`, `ce:GetReservationUtilization`). Contas conectadas antes desses módulos precisam atualizar a stack. Até lá, o scan registra um aviso e segue sem esses dados, sem falhar.
 
 A identidade da plataforma vem da default credential chain (IRSA/Pod Identity no EKS) e precisa de `sts:AssumeRole` e `pricing:GetProducts`. O cliente não precisa de permissão de Pricing. As credenciais temporárias ficam só em memória, com refresh 5 min antes de expirar e deduplicação de AssumeRole concorrente. `AwsClientFactory.createClient(EC2Client, account, region)` funciona para qualquer client v3, com retry `adaptive` para throttling. Falha numa região não aborta as demais.
 
@@ -133,7 +134,20 @@ Trocar só a RAM: nas famílias `c`, `m` e `r`, o mesmo tamanho tem a mesma vCPU
 - `RDS_MULTI_AZ`: banco Multi-AZ fora de produção, detectado pela tag `Environment`/`env`/`stage`/`ambiente` (confiança alta) ou pelo nome (`-hml`, `-dev`, `-qa`...). A economia é a diferença entre os preços Multi-AZ e Single-AZ.
 - `RDS_EXTENDED_SUPPORT`: versão maior da engine fora do suporte padrão (`DescribeDBMajorEngineVersions`). A economia é o custo do Extended Support: vCPU × preço por vCPU-hora × 730, em dobro no Multi-AZ. 180 dias antes do fim do suporte, a análise ganha um aviso.
 - Storage `gp2` → `gp3` não é recomendado no RDS: o preço por GB é o mesmo.
+- `RDS_PUBLIC_ACCESS`: banco com `PubliclyAccessible`. Risco de segurança e custo do IPv4 público; recomenda deixar privado e acessar por dentro da VPC, VPN ou túnel SSM.
 - Aurora e bancos fora do status `available` ainda não são analisados.
+
+## Regras do analyzer de rede
+
+Desde 2024, a AWS cobra cada IPv4 público (USD 0,005/h, cerca de USD 3,65/mês), em uso ou não.
+
+- `EIP_UNUSED`: Elastic IP sem associação. Recomenda liberar, depois de conferir DNS e allow-lists.
+- `NAT_GATEWAY_IDLE`: NAT Gateway com menos de 1 GB em 14 dias (e mais de 7 dias de vida). Economia: hora do NAT mais o IPv4 dele.
+- `LOAD_BALANCER_IDLE`: ALB sem requisições ou NLB sem conexões novas em 14 dias. Economia: hora do load balancer mais os IPv4 dele.
+- `VPC_ENDPOINT_MISSING`: VPC com NAT Gateway e sem gateway endpoint de S3 (e DynamoDB). Os endpoints são grátis e tiram esse tráfego da cobrança por GB do NAT. A economia fica `null`, porque o CloudWatch não mostra quanto do tráfego do NAT vai para o S3; a descrição traz o volume processado pelo NAT.
+- Instâncias com IPv4 público não viram recomendação: tirar o IP exigiria um NAT, que custa mais que alguns IPs.
+
+`GET /dashboard/summary` traz `publicIpv4`: quantidade de IPv4 públicos por tipo de dono (`EC2`, `LOAD_BALANCER`, `RDS`, `NAT_GATEWAY`, `OTHER`, `UNATTACHED`) e o custo mensal. Load balancers Classic e Gateway ainda não são analisados.
 
 ## Savings Plans e Reserved Instances
 

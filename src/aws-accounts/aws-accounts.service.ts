@@ -22,6 +22,7 @@ import { buildQuickCreateUrl, predictedRoleArn } from './helpers/cloudformation.
 import { buildPermissionsPolicy, buildTrustPolicy } from './helpers/iam-policy.helper';
 
 import { CommitmentSnapshot } from '../aws/costs/interfaces/commitment.interface';
+import { NetworkSnapshot } from '../aws/network/interfaces/network.interface';
 
 @Injectable()
 export class AwsAccountsService {
@@ -197,8 +198,12 @@ export class AwsAccountsService {
     await this.repo.update({ id }, { commitments });
   }
 
-  commitmentsByOrganization(organizationId: string): Promise<Pick<AwsAccount, 'awsAccountId' | 'name' | 'commitments'>[]> {
-    return this.repo.find({ where: { organizationId }, select: { awsAccountId: true, name: true, commitments: true } });
+  async saveNetwork(id: string, network: NetworkSnapshot): Promise<void> {
+    await this.repo.update({ id }, { network });
+  }
+
+  commitmentsByOrganization(organizationId: string): Promise<Pick<AwsAccount, 'awsAccountId' | 'name' | 'commitments' | 'network'>[]> {
+    return this.repo.find({ where: { organizationId }, select: { awsAccountId: true, name: true, commitments: true, network: true } });
   }
 
   countByOrganization(organizationId: string): Promise<{ status: AwsAccountStatus; count: string }[]> {

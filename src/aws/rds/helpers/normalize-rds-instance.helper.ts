@@ -11,6 +11,7 @@ export function normalizeRdsInstance(db: DBInstance, region: string): RdsInstanc
     engine: db.Engine,
     engineVersion: db.EngineVersion ?? '',
     multiAz: db.MultiAZ ?? false,
+    publiclyAccessible: db.PubliclyAccessible ?? false,
     storageType: db.StorageType ?? null,
     allocatedStorageGb: db.AllocatedStorage ?? null,
     status: db.DBInstanceStatus ?? 'unknown',

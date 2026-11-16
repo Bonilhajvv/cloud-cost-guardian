@@ -71,6 +71,7 @@ function build() {
         Object.fromEntries(classes.map((c) => [c, { monthly: (deployment === 'Multi-AZ' ? 2 : 1) * (c === 'db.m6g.large' ? 109.5 : 94.9), vcpu: 2 }])),
       ),
       getRdsExtendedSupportHourlyPerVcpu: jest.fn().mockResolvedValue(0.1),
+      getNetworkPrices: jest.fn().mockResolvedValue({ publicIpv4Hourly: 0.005, natGatewayHourly: 0.045, natGatewayPerGb: 0.045, loadBalancerHourly: {} }),
     },
     recommendations: { syncDrafts: jest.fn().mockResolvedValue({ created: 3, updated: 0, resolved: 0, skipped: 0 }) },
   };
