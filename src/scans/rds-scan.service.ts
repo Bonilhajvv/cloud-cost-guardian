@@ -80,6 +80,7 @@ export class RdsScanService {
         prices: m.rdsPrices ?? null,
         lifecycle: m.rdsLifecycle ?? null,
         extendedSupportHourlyPerVcpu: m.rdsExtendedSupportHourlyPerVcpu ?? null,
+        environmentOverride: resource.environment,
         currency: DEFAULT_CURRENCY,
       });
       await this.inventory.patchMetadata(account.id, resource.resourceType, resource.resourceId, { analysis: result.analysis });

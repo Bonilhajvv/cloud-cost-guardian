@@ -34,3 +34,7 @@ export function workloadResourceId(clusterId: string, namespace: string, kind: s
 export function nodeGroupResourceId(clusterId: string, pool: NodePool | null, instanceType: string | null): string {
   return `k8s:${clusterId}/nodegroup/${pool?.value ?? '-'}/${instanceType ?? 'unknown'}`;
 }
+
+export function namespaceResourceId(clusterId: string, namespace: string): string {
+  return `k8s:${clusterId}/namespace/${namespace}`;
+}

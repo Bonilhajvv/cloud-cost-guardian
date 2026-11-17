@@ -108,6 +108,7 @@ export class ResourceInventoryService {
     if (query.search) {
       qb.andWhere('(r.name ILIKE :search OR r.resourceId ILIKE :search)', { search: `%${query.search}%` });
     }
+    if (query.environment) qb.andWhere(`COALESCE(r.metadata->'analysis'->'environment'->>'environment', 'UNKNOWN') = :environment`, { environment: query.environment });
     const [items, total] = await qb.getManyAndCount();
     return paginate(items, total, query);
   }
@@ -178,7 +179,7 @@ export class ResourceInventoryService {
     const resource = await this.get(organizationId, id);
     resource.environment = environment;
     const analysis = resource.metadata.analysis;
-    if (analysis && isEc2Analysis(analysis)) {
+    if (analysis && (isEc2Analysis(analysis) || analysis.kind === 'RDS')) {
       resource.metadata = { ...resource.metadata, analysis: { ...analysis, environment: detectEnvironment(resource.name, resource.metadata.tags ?? {}, environment) } };
     }
     const saved = await this.repo.save(resource);

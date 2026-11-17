@@ -34,3 +34,11 @@ export const MAX_RESOURCE_ID_LENGTH = 512;
 export const MAX_TITLE_LENGTH = 255;
 
 export const KUBERNETES_SERVICE = 'kubernetes';
+
+export const SYSTEM_NAMESPACES: readonly string[] = ['kube-system', 'kube-public', 'kube-node-lease', 'ccg-system'];
+
+export const SCALE_TO_ZERO_KINDS: readonly string[] = ['Deployment', 'StatefulSet'];
+
+export const MIN_K8S_SCHEDULE_MONTHLY_SAVINGS = 5;
+
+export const MAX_NAMESPACE_ENVIRONMENT_BATCH = 500;

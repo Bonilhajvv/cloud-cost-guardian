@@ -1,3 +1,4 @@
+import { EnvironmentInfo } from '../../aws/core/interfaces/environment.interface';
 import { MetricSummary } from '../../aws/metrics/interfaces/utilization-metrics.interface';
 
 export interface AgentPrincipal {
@@ -38,4 +39,17 @@ export interface ManifestParams {
   agentToken: string;
   apiUrl: string;
   image: string;
+}
+
+export interface NamespaceView {
+  namespace: string;
+  workloads: number;
+  pods: number;
+  environment: EnvironmentInfo;
+}
+
+export interface ClusterEnvironmentView {
+  clusterId: string;
+  environment: EnvironmentInfo;
+  namespaces: Record<string, string>;
 }

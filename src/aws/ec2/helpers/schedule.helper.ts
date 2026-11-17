@@ -1,7 +1,7 @@
 import { Level, RecommendationSource, RecommendationType } from '../../../common/enums';
 import { round } from '../../../common/helpers/stats.helper';
 import { HOURS_PER_WEEK } from '../../../organizations/constants/work-schedule.constant';
-import { formatDays } from '../../../organizations/helpers/work-schedule.helper';
+import { offHoursFraction, scheduleKey, scheduleWindow } from '../../../organizations/helpers/work-schedule.helper';
 import { EffectiveWorkSchedule } from '../../../organizations/interfaces/work-schedule.interface';
 import { RecommendationDraft } from '../../core/interfaces/recommendation-draft.interface';
 import { AUTOSCALING_GROUP_TAG, MIN_SCHEDULE_MONTHLY_SAVINGS, SCHEDULER_TAG_KEYS } from '../constants/schedule.constant';
@@ -18,13 +18,13 @@ export function scheduleDraft(analysis: Ec2Analysis, instance: Ec2InstanceDetail
   const env = analysis.environment;
   if (instance.state !== 'running' || env?.environment !== 'NON_PRODUCTION') return null;
   if (analysis.kubernetes || instance.tags[AUTOSCALING_GROUP_TAG] || analysis.scheduler) return null;
-  const offFraction = 1 - schedule.hoursPerWeek / HOURS_PER_WEEK;
+  const offFraction = offHoursFraction(schedule);
   if (offFraction <= 0) return null;
   const monthly = analysis.current.monthlyCost;
   const savings = monthly === null ? null : round(monthly * offFraction);
   if (savings !== null && savings < MIN_SCHEDULE_MONTHLY_SAVINGS) return null;
 
-  const window = `${formatDays(schedule.days)} ${String(schedule.startHour).padStart(2, '0')}:00-${String(schedule.endHour).padStart(2, '0')}:00`;
+  const window = scheduleWindow(schedule);
   const reasons = [
     `Non-production instance (${env.detail})`,
     `Running only ${window} (${schedule.timezone}) is ${schedule.hoursPerWeek}h of ${HOURS_PER_WEEK}h per week, about ${Math.round(offFraction * 100)}% less instance cost`,
@@ -65,7 +65,7 @@ export function scheduleDraft(analysis: Ec2Analysis, instance: Ec2InstanceDetail
     estimatedMonthlySavings: savings,
     estimatedYearlySavings: savings === null ? null : round(savings * 12),
     currency,
-    targetKey: `${schedule.days.join('')}-${schedule.startHour}-${schedule.endHour}`,
+    targetKey: scheduleKey(schedule),
     analysis: draftAnalysis,
   };
 }

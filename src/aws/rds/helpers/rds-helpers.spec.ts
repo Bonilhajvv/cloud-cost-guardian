@@ -1,4 +1,3 @@
-import { nonProductionEnvironment } from './environment.helper';
 import { extendedSupportYear, inExtendedSupport, lifecycleFor, majorVersionOf } from './rds-lifecycle.helper';
 
 const lifecycle = (engine: string, majorVersion: string, standardSupportEnd: string) => ({ engine, majorVersion, standardSupportEnd, extendedSupportEnd: null });
@@ -23,19 +22,5 @@ describe('RDS lifecycle helpers', () => {
     expect(inExtendedSupport(null, new Date())).toBe(false);
     expect(extendedSupportYear(pg13!, new Date('2026-11-16'))).toBe('Year 1, Year 2');
     expect(extendedSupportYear(pg13!, new Date('2028-03-02'))).toBe('Year 3');
-  });
-});
-
-describe('nonProductionEnvironment', () => {
-  it.each([
-    ['db', { Environment: 'hml' }, 'tag Environment=hml'],
-    ['db', { env: 'Staging' }, 'tag env=Staging'],
-    ['db', { Environment: 'production' }, null],
-    ['orders-dev', {}, 'name contains "dev"'],
-    ['orders_qa_1', {}, 'name contains "qa"'],
-    ['orders-prd-test', { Environment: 'prd' }, null],
-    ['devices', {}, null],
-  ])('%s %j', (name, tags, expected) => {
-    expect(nonProductionEnvironment(name, tags)).toBe(expected);
   });
 });

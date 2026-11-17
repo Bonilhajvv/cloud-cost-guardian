@@ -58,6 +58,8 @@ export const KUBERNETES_RECOMMENDATION_TYPES = [
   RecommendationType.K8S_WORKLOAD_RIGHTSIZING,
   RecommendationType.K8S_NODE_CONSOLIDATION,
   RecommendationType.K8S_WORKLOAD_UNDERSIZED,
+  RecommendationType.K8S_NODE_GROUP_SCHEDULE,
+  RecommendationType.K8S_NAMESPACE_SCHEDULE,
 ] as const;
 
 export const OPPORTUNITY_LABELS: Record<RecommendationType, string> = {
@@ -86,6 +88,8 @@ export const OPPORTUNITY_LABELS: Record<RecommendationType, string> = {
   [RecommendationType.K8S_NODE_CONSOLIDATION]: 'Kubernetes',
   [RecommendationType.K8S_WORKLOAD_UNDERSIZED]: 'Kubernetes',
   [RecommendationType.EC2_SCHEDULE]: 'Scheduling',
+  [RecommendationType.K8S_NODE_GROUP_SCHEDULE]: 'Scheduling',
+  [RecommendationType.K8S_NAMESPACE_SCHEDULE]: 'Scheduling',
 };
 
 export const REMOVAL_TYPES: readonly RecommendationType[] = [RecommendationType.EC2_IDLE, RecommendationType.EBS_UNUSED, RecommendationType.EC2_STOPPED, RecommendationType.RDS_IDLE, RecommendationType.EIP_UNUSED, RecommendationType.NAT_GATEWAY_IDLE, RecommendationType.LOAD_BALANCER_IDLE];

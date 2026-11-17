@@ -11,6 +11,7 @@ import {
 import { AwsAccount } from '../../aws-accounts/entities/aws-account.entity';
 import { KubernetesClusterStatus, KubernetesProvider } from '../../common/enums';
 import { Organization } from '../../organizations/entities/organization.entity';
+import { ManualEnvironment } from '../../aws/core/interfaces/environment.interface';
 
 @Entity('kubernetes_clusters')
 @Index(['organizationId', 'name'], { unique: true })
@@ -64,6 +65,12 @@ export class KubernetesCluster {
 
   @Column({ default: false })
   metricsServerAvailable: boolean;
+
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  environment: ManualEnvironment | null;
+
+  @Column({ type: 'jsonb', default: () => "'{}'" })
+  namespaceEnvironments: Record<string, ManualEnvironment>;
 
   @Column({ type: 'int', default: 0 })
   nodeCount: number;

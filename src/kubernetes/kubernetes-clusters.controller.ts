@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser, Roles } from '../common/decorators';
 import { PaginationQueryDto } from '../common/dto/pagination.dto';
@@ -6,6 +6,8 @@ import { ORG_READ_ROLES, Role } from '../common/enums';
 import { TenantUser } from '../common/interfaces/request-user.interface';
 import { ClusterInstallDto } from './dto/cluster-install.dto';
 import { CreateClusterDto } from './dto/create-cluster.dto';
+import { ListNamespacesDto } from './dto/list-namespaces.dto';
+import { SetClusterEnvironmentDto, SetNamespaceEnvironmentsDto } from './dto/set-cluster-environment.dto';
 import { KubernetesClustersService } from './kubernetes-clusters.service';
 
 @ApiTags('Kubernetes')
@@ -49,6 +51,24 @@ export class KubernetesClustersController {
   @Roles(...ORG_READ_ROLES)
   workloads(@CurrentUser() user: TenantUser, @Param('id', ParseUUIDPipe) id: string, @Query() query: PaginationQueryDto) {
     return this.clusters.listWorkloads(user.organizationId, id, query);
+  }
+
+  @Get(':id/namespaces')
+  @Roles(...ORG_READ_ROLES)
+  namespaces(@CurrentUser() user: TenantUser, @Param('id', ParseUUIDPipe) id: string, @Query() query: ListNamespacesDto) {
+    return this.clusters.listNamespaces(user.organizationId, id, query);
+  }
+
+  @Patch(':id/environment')
+  @Roles(Role.ORG_ADMIN)
+  setEnvironment(@CurrentUser() user: TenantUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: SetClusterEnvironmentDto) {
+    return this.clusters.setEnvironment(user, id, dto.environment);
+  }
+
+  @Patch(':id/namespaces/environment')
+  @Roles(Role.ORG_ADMIN)
+  setNamespaceEnvironments(@CurrentUser() user: TenantUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: SetNamespaceEnvironmentsDto) {
+    return this.clusters.setNamespaceEnvironments(user, id, dto.items);
   }
 
   @Post(':id/install')

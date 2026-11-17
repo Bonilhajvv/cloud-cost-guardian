@@ -1,6 +1,6 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { AwsAccount } from '../../aws-accounts/entities/aws-account.entity';
-import { Environment } from '../../aws/core/interfaces/environment.interface';
+import { ManualEnvironment } from '../../aws/core/interfaces/environment.interface';
 import { AwsResourceMetadata } from '../interfaces/aws-resource-metadata.interface';
 
 @Entity('aws_resources')
@@ -45,7 +45,7 @@ export class AwsResource {
   metadata: AwsResourceMetadata;
 
   @Column({ type: 'varchar', length: 32, nullable: true })
-  environment: Exclude<Environment, 'UNKNOWN'> | null;
+  environment: ManualEnvironment | null;
 
   @Column({ type: 'timestamptz', default: () => 'now()' })
   discoveredAt: Date;

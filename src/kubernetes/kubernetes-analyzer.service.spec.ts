@@ -1,11 +1,18 @@
 import { Level, RecommendationType } from '../common/enums';
 import { ContainerSpec, NodeGroupMember, NodePool, UsagePeak, WorkloadAnalyzerInput } from './interfaces/kubernetes-analysis.interface';
 import { KubernetesAnalyzerService } from './kubernetes-analyzer.service';
+import { EnvironmentInfo } from '../aws/core/interfaces/environment.interface';
+import { effectiveWorkSchedule } from '../organizations/helpers/work-schedule.helper';
+import { clusterEnvironment, namespaceEnvironment, nodeGroupEnvironment } from './helpers/kubernetes-environment.helper';
 
 const NOW = new Date('2026-11-17T12:00:00Z');
 const GIB = 1024 ** 3;
 const MIB = 1024 ** 2;
 const analyzer = new KubernetesAnalyzerService();
+const PROD: EnvironmentInfo = { environment: 'PRODUCTION', source: 'NAME', detail: 'cluster name contains "prod"' };
+const HML: EnvironmentInfo = { environment: 'NON_PRODUCTION', source: 'TAG', detail: 'node pool tag env=hml' };
+const SCHEDULE = effectiveWorkSchedule(null);
+const cluster = (name: string, environment: 'PRODUCTION' | 'NON_PRODUCTION' | null = null, namespaceEnvironments: Record<string, 'PRODUCTION' | 'NON_PRODUCTION'> = {}) => ({ name, environment, namespaceEnvironments });
 
 const workload = (
   overrides: Partial<WorkloadAnalyzerInput['workload']> = {},
@@ -18,6 +25,7 @@ const workload = (
     workload: { namespace: 'payments', kind: 'Deployment', name: 'api', podCount: 3, requestsCpu: 6, requestsMemoryBytes: 12 * GIB, limitsCpu: null, limitsMemoryBytes: null, hpa: null, containers: null, ...overrides },
     peak,
     containerPeaks,
+    environment: PROD,
     currency: 'USD',
     now: NOW,
   });
@@ -38,8 +46,8 @@ const node = (name: string, peakCpu: number, peakMemoryGib: number, overrides: P
   ...overrides,
 });
 
-const group = (nodes: NodeGroupMember[], pool: NodePool | null = { label: 'eks.amazonaws.com/nodegroup', value: 'ng-1' }) =>
-  analyzer.analyzeNodeGroup({ clusterId: 'c-1', clusterName: 'prod', pool, instanceType: 'm5.xlarge', nodes, currency: 'USD', now: NOW });
+const group = (nodes: NodeGroupMember[], pool: NodePool | null = { label: 'eks.amazonaws.com/nodegroup', value: 'ng-1' }, environment: EnvironmentInfo = PROD) =>
+  analyzer.analyzeNodeGroup({ clusterId: 'c-1', clusterName: 'prod', pool, instanceType: 'm5.xlarge', nodes, environment, schedule: SCHEDULE, currency: 'USD', now: NOW });
 
 describe('KubernetesAnalyzerService', () => {
   describe('workload requests', () => {
@@ -182,6 +190,73 @@ describe('KubernetesAnalyzerService', () => {
         drafts: [draft],
       } = group(nodes, { label: 'karpenter.sh/nodepool', value: 'default' });
       expect(draft?.description).toContain('consolidationPolicy: WhenEmptyOrUnderutilized');
+    });
+  });
+
+  describe('environments and off-hours', () => {
+    it('classifies namespaces before the cluster, and manual marks before names', () => {
+      expect(namespaceEnvironment(cluster('prod-eks'), 'payments-hml')).toMatchObject({ environment: 'NON_PRODUCTION', source: 'NAME', detail: 'namespace name contains "hml"' });
+      expect(namespaceEnvironment(cluster('prod-eks'), 'payments')).toMatchObject({ environment: 'PRODUCTION', detail: 'cluster name contains "prod"' });
+      expect(namespaceEnvironment(cluster('prod-eks', null, { payments: 'NON_PRODUCTION' }), 'payments')).toMatchObject({ environment: 'NON_PRODUCTION', source: 'MANUAL' });
+      expect(namespaceEnvironment(cluster('shared'), 'payments').environment).toBe('UNKNOWN');
+      expect(clusterEnvironment(cluster('eks-hml', 'PRODUCTION'))).toMatchObject({ environment: 'PRODUCTION', source: 'MANUAL' });
+    });
+
+    it('classifies node groups by cluster mark, pool name, cluster name, then the nodes EC2', () => {
+      const ec2Hml = { environment: 'NON_PRODUCTION' as const, source: 'TAG' as const, detail: 'tag env=hml' };
+      expect(nodeGroupEnvironment(cluster('shared'), { label: 'eks.amazonaws.com/nodegroup', value: 'ng-hml' }, [])).toMatchObject({ environment: 'NON_PRODUCTION', detail: 'node pool name contains "hml"' });
+      expect(nodeGroupEnvironment(cluster('shared'), null, [ec2Hml, ec2Hml])).toMatchObject({ environment: 'NON_PRODUCTION', detail: "every node's EC2 tag env=hml" });
+      expect(nodeGroupEnvironment(cluster('shared'), null, [ec2Hml, null]).environment).toBe('UNKNOWN');
+      expect(nodeGroupEnvironment(cluster('shared', 'PRODUCTION'), { label: 'x', value: 'ng-hml' }, [ec2Hml]).environment).toBe('PRODUCTION');
+    });
+
+    it('scales a non-production node group to zero off-hours, priced from its nodes', () => {
+      const nodes = ['a', 'b'].map((n) => node(n, 3, 12));
+      const { drafts, analysis } = group(nodes, { label: 'eks.amazonaws.com/nodegroup', value: 'ng-hml' }, HML);
+      expect(analysis.environment).toEqual(HML);
+      expect(drafts).toHaveLength(1);
+      expect(drafts[0]).toMatchObject({
+        type: RecommendationType.K8S_NODE_GROUP_SCHEDULE,
+        title: 'Scale node group ng-hml in cluster prod to zero outside business hours (Mon-Fri 08:00-20:00)',
+        currentMonthlyCost: 280.32,
+        estimatedMonthlySavings: 180.21,
+        confidence: Level.HIGH,
+        targetKey: '12345-8-20',
+      });
+      expect(drafts[0].analysis.finding).toBe('OFF_HOURS');
+      expect(group(nodes, null, PROD).drafts).toEqual([]);
+    });
+
+    it('adds the off-hours suggestion next to consolidation and even without request history', () => {
+      const idle = ['a', 'b', 'c', 'd', 'e', 'f'].map((n) => node(n, 1, 3));
+      expect(group(idle, null, HML).drafts.map((d) => d.type)).toEqual([RecommendationType.K8S_NODE_CONSOLIDATION, RecommendationType.K8S_NODE_GROUP_SCHEDULE]);
+      const fresh = ['a', 'b'].map((n) => node(n, 1, 3, { peakRequests: { cpuCores: 1, memoryBytes: GIB, days: 1 } }));
+      expect(group(fresh, null, HML).drafts.map((d) => d.type)).toEqual([RecommendationType.K8S_NODE_GROUP_SCHEDULE]);
+    });
+
+    it('scales a non-production namespace to zero off-hours in a shared cluster', () => {
+      const run = (namespace: string, environment: EnvironmentInfo, cpu = 2) =>
+        analyzer.analyzeNamespace({
+          clusterId: 'c-1',
+          clusterName: 'shared',
+          namespace,
+          workloads: [
+            { kind: 'Deployment', podCount: 2, requestsCpu: cpu, requestsMemoryBytes: 4 * GIB },
+            { kind: 'DaemonSet', podCount: 3, requestsCpu: 0.3, requestsMemoryBytes: GIB },
+          ],
+          environment,
+          schedule: SCHEDULE,
+          currency: 'USD',
+          now: NOW,
+        });
+      const hml = { environment: 'NON_PRODUCTION' as const, source: 'NAME' as const, detail: 'namespace name contains "hml"' };
+      const { drafts } = run('payments-hml', hml);
+      expect(drafts[0]).toMatchObject({ type: RecommendationType.K8S_NAMESPACE_SCHEDULE, resourceId: 'k8s:c-1/namespace/payments-hml', estimatedMonthlySavings: null, confidence: Level.MEDIUM });
+      expect(drafts[0].description).toContain('reserve 2000m CPU and 4 GiB memory');
+      expect(drafts[0].description).toContain('kube-downscaler');
+      expect(run('payments', PROD).drafts).toEqual([]);
+      expect(run('kube-system', hml).drafts).toEqual([]);
+      expect(run('tiny-hml', hml, 0.05).drafts).toHaveLength(1);
     });
   });
 });

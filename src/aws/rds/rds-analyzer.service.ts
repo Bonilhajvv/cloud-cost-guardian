@@ -5,7 +5,7 @@ import { RecommendationDraft } from '../core/interfaces/recommendation-draft.int
 import { mapPerformanceRisk, maxLevel, severityFor } from '../ec2/helpers/risk-level.helper';
 import { HOURS_PER_MONTH } from '../pricing/constants/pricing.constant';
 import { DAY_MS, IDLE_MIN_DATAPOINTS, SUPPORT_ENDING_SOON_DAYS } from './constants/rds.constant';
-import { nonProductionEnvironment } from './helpers/environment.helper';
+import { detectEnvironment } from '../core/helpers/environment.helper';
 import { inExtendedSupport } from './helpers/rds-lifecycle.helper';
 import { RdsAnalysis, RdsAnalyzerInput, RdsAnalyzerResult } from './interfaces/rds-analysis.interface';
 
@@ -40,6 +40,7 @@ export class RdsAnalyzerService {
       name: instance.dbInstanceId,
       region: instance.region,
       finding: 'OPTIMIZED',
+      environment: detectEnvironment(instance.dbInstanceId, instance.tags, input.environmentOverride ?? null),
       current: {
         instanceClass: instance.instanceClass,
         engine: instance.engine,
@@ -195,13 +196,13 @@ export class RdsAnalyzerService {
   private multiAz(analysis: RdsAnalysis, input: RdsAnalyzerInput): Opportunity | null {
     const { instance, prices } = input;
     if (!instance.multiAz) return null;
-    const environment = nonProductionEnvironment(instance.dbInstanceId, instance.tags);
-    if (!environment) return null;
+    const environment = analysis.environment;
+    if (environment?.environment !== 'NON_PRODUCTION') return null;
     const multi = prices?.byClass[instance.instanceClass]?.monthly;
     const single = prices?.singleAz?.monthly;
     const savings = multi !== undefined && single !== undefined && single !== null ? multi - single : null;
     const reasons = [
-      `Non-production database (${environment}) running Multi-AZ, which doubles the instance price`,
+      `Non-production database (${environment.detail}) running Multi-AZ, which doubles the instance price`,
       'Single-AZ loses automatic failover: acceptable outside production',
       'Online change (ModifyDBInstance --no-multi-az), no restart',
     ];
@@ -212,7 +213,7 @@ export class RdsAnalyzerService {
       description: `${reasons.join('. ')}. Estimated savings: ${this.savingsText(savings, input.currency)} (Multi-AZ storage savings not included).`,
       monthlySavings: savings,
       risk: Level.LOW,
-      confidence: environment.startsWith('tag') ? Level.HIGH : Level.MEDIUM,
+      confidence: environment.source === 'NAME' ? Level.MEDIUM : Level.HIGH,
     };
   }
 

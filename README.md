@@ -127,7 +127,7 @@ Cada EC2 recebe `metadata.analysis.environment`: `PRODUCTION`, `NON_PRODUCTION` 
 2. Tag `Environment`, `env`, `stage` ou `ambiente`. Valor fora das listas conhecidas fica `UNKNOWN`.
 3. Nome com `hml`, `homolog`, `dev`, `staging`, `qa` etc. ou `prd`, `prod`, `producao`. Nome com os dois tipos de termo fica `UNKNOWN`.
 
-`GET /resources/ec2/analysis?environment=UNKNOWN` lista o que o sistema não conseguiu classificar, para o frontend perguntar ao usuário. A resposta vai em `PATCH /resources/:id/environment` ou, em lote (até 500), em `PATCH /resources/environment` com `{ items: [{ id, environment }] }`. `environment: null` apaga a marcação e volta para a detecção automática. A análise é atualizada na hora; a recomendação aparece no scan seguinte. O RDS usa a mesma detecção (sem marcação manual) para `RDS_MULTI_AZ`.
+`GET /resources/ec2/analysis?environment=UNKNOWN` lista o que o sistema não conseguiu classificar, para o frontend perguntar ao usuário. A resposta vai em `PATCH /resources/:id/environment` ou, em lote (até 500), em `PATCH /resources/environment` com `{ items: [{ id, environment }] }`. `environment: null` apaga a marcação e volta para a detecção automática. A análise é atualizada na hora; a recomendação aparece no scan seguinte. O RDS usa a mesma detecção e a mesma marcação manual (`GET /resources?resourceType=rds:db&environment=UNKNOWN` lista os bancos sem ambiente) para `RDS_MULTI_AZ`.
 
 `EC2_SCHEDULE`: EC2 `NON_PRODUCTION` ligada recebe a sugestão de ficar desligada fora do expediente da organização (AWS Instance Scheduler ou EventBridge Scheduler). O padrão é seg-sex 08:00-20:00 `America/Sao_Paulo`, 60h de 168h por semana (cerca de 64% a menos). O expediente pode ser configurado em `GET|PATCH|DELETE /organizations/me/work-schedule` (`days` de 1 = segunda a 7 = domingo, `startHour`, `endHour`, `timezone`).
 
@@ -178,6 +178,19 @@ Cada Deployment, StatefulSet ou DaemonSet é dimensionado por container, com a s
 - `K8S_WORKLOAD_UNDERSIZED` (`INCREASE` e `SET`): pico acima do request (aumento mínimo de 50m ou 64 MiB) ou container sem request. Sem request, o scheduler conta o container como zero e superlota o nó, e um pod sem nenhum request é `BestEffort`, o primeiro a ser despejado. Memória acima do request põe o pod entre os primeiros despejados; CPU acima do request fica lenta quando o nó está ocupado. Se o novo request passar do limit, a descrição pede para subir o limit, porque o Kubernetes rejeita request maior que limit. Entra em `COST_INCREASE_TYPES`: pode exigir mais nós. A severidade é `MEDIUM` quando envolve memória.
 - Com HPA, as duas avisam que o alvo de utilização de CPU muda junto com o request.
 - `K8S_NODE_CONSOLIDATION`: nós worker agrupados por node pool (`eks.amazonaws.com/nodegroup`, `karpenter.sh/nodepool`, GKE, AKS) e tipo de instância. Soma o maior request de cada nó em 14 dias e calcula quantos nós comportam isso a 85% do allocatable, mais 1 nó de folga. Pods de DaemonSet entram na soma como se não diminuíssem com menos nós, o que deixa a conta conservadora. A economia é o custo dos nós mais baratos que sobram, vindo da análise EC2; sem preço de algum nó, fica `null`. Para Karpenter, a descrição sugere ligar a consolidation do NodePool.
+
+Ambiente no Kubernetes (fica em `metadata.analysis.environment`):
+
+- Namespace: marcação do namespace, depois o nome do namespace (`payments-hml`), depois o ambiente do cluster.
+- Cluster: marcação do cluster, depois o nome do cluster.
+- Node group: marcação do cluster, depois o nome do node pool (`ng-hml`), depois o nome do cluster, depois o ambiente das EC2 dos nós (só quando todas concordam).
+- `GET /kubernetes-clusters/:id/namespaces?environment=UNKNOWN` lista os namespaces sem ambiente, com workloads e pods. As marcações são opcionais: `PATCH /kubernetes-clusters/:id/environment` e, em lote, `PATCH /kubernetes-clusters/:id/namespaces/environment` com `{ items: [{ namespace, environment }] }`. `null` apaga a marcação.
+
+Fora do expediente da organização (`/organizations/me/work-schedule`):
+
+- `K8S_NODE_GROUP_SCHEDULE`: node group de não produção reduzido a zero fora do expediente (scheduled actions no Auto Scaling group; com Karpenter, basta reduzir os workloads). A economia é o custo dos nós vezes a fração de horas desligada; abaixo de USD 5/mês, nada é recomendado. Aparece mesmo sem histórico de requests e convive com `K8S_NODE_CONSOLIDATION`.
+- `K8S_NAMESPACE_SCHEDULE`: namespace de não produção num cluster que não é todo de não produção, com Deployments e StatefulSets reservando pelo menos 250m de CPU ou 256 MiB. Sugere kube-downscaler ou KEDA cron. A economia fica `null`: ela vem dos nós que o autoscaler remove. Namespaces de sistema (`kube-*`, `ccg-system`) ficam de fora.
+- A confiança é `HIGH` com tag ou marcação e `MEDIUM` quando o ambiente veio de um nome.
 
 ## Savings Plans e Reserved Instances
 
@@ -255,7 +268,7 @@ O worker é o primeiro candidato a virar microsserviço: mesma imagem, outro ent
 
 ## Endpoints principais
 
-`/auth` (register, login, refresh, me) · `/users` · `/organizations/me` (+ `/work-schedule`) · `/aws-accounts` · `/scans/history` · `/resources` · `/resources/ec2/analysis` (+ `?environment=`) · `PATCH /resources/:id/environment` · `PATCH /resources/environment` · `/costs/{summary,daily,trend,by-resource}` · `/recommendations` (+ `PATCH :id/status`) · `/dashboard/summary` · `/audit-logs` · `/admin/*`
+`/auth` (register, login, refresh, me) · `/users` · `/organizations/me` (+ `/work-schedule`) · `/aws-accounts` · `/kubernetes-clusters` (+ `/:id/namespaces`, `PATCH /:id/environment`, `PATCH /:id/namespaces/environment`) · `/scans/history` · `/resources` · `/resources/ec2/analysis` (+ `?environment=`) · `PATCH /resources/:id/environment` · `PATCH /resources/environment` · `/costs/{summary,daily,trend,by-resource}` · `/recommendations` (+ `PATCH :id/status`) · `/dashboard/summary` · `/audit-logs` · `/admin/*`
 
 ## Limitações conhecidas da V1
 
@@ -268,5 +281,5 @@ O worker é o primeiro candidato a virar microsserviço: mesma imagem, outro ent
 - Compromissos usam o escopo padrão do Cost Explorer (conta pagadora). Em contas membro de uma AWS Organization, a recomendação pode considerar outras contas. Compras de Savings Plans e RI não são detectadas como "implementadas": a recomendação deixa de aparecer quando a AWS para de recomendá-la.
 - Aumentar disco, desligar Multi-AZ e atualizar a engine não são detectados como "implementados": a recomendação só deixa de aparecer no scan seguinte, sem registrar a economia realizada.
 - Kubernetes: a consolidação de nós usa os requests atuais, sem simular os requests reduzidos pelas recomendações de workload. Clusters sem `awsAccountId` não são analisados. Ajustes de request e nós removidos não são detectados como "implementados": a recomendação só deixa de aparecer no scan seguinte.
-- Ambiente e expediente: `EC2_SCHEDULE` não verifica se a instância trabalha à noite ou no fim de semana (a descrição pede para o usuário confirmar) e calcula a economia sobre o custo atual, que pode já ter desconto de RI ou Savings Plan. O RDS não aceita marcação manual de ambiente, e nós e namespaces do Kubernetes ainda não são classificados por ambiente.
+- Ambiente e expediente: `EC2_SCHEDULE` não verifica se a instância trabalha à noite ou no fim de semana (a descrição pede para o usuário confirmar) e calcula a economia sobre o custo atual, que pode já ter desconto de RI ou Savings Plan. As recomendações de expediente do Kubernetes não são detectadas como "implementadas": a agenda fica fora do que o agente lê.
 - Modo EKS sem agente (access entry + IAM) ainda não existe.

@@ -1,3 +1,4 @@
+import { Environment, EnvironmentInfo } from '../../core/interfaces/environment.interface';
 import { Level, RecommendationSource, RecommendationType } from '../../../common/enums';
 import { RecommendationDraft } from '../../core/interfaces/recommendation-draft.interface';
 import { RdsUtilizationMetrics } from '../../metrics/interfaces/rds-metrics.interface';
@@ -21,6 +22,7 @@ export interface RdsAnalyzerInput {
   prices: RdsPrices | null;
   lifecycle: RdsEngineLifecycle | null;
   extendedSupportHourlyPerVcpu: number | null;
+  environmentOverride?: Environment | null;
   currency: string;
   now?: Date;
 }
@@ -32,6 +34,7 @@ export interface RdsAnalysis {
   name: string | null;
   region: string;
   finding: RdsFinding;
+  environment?: EnvironmentInfo;
   current: {
     instanceClass: string;
     engine: string;

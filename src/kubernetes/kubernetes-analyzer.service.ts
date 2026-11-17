@@ -3,15 +3,21 @@ import { RecommendationDraft } from '../aws/core/interfaces/recommendation-draft
 import { severityFor } from '../aws/ec2/helpers/risk-level.helper';
 import { Level, RecommendationSource, RecommendationType } from '../common/enums';
 import { round } from '../common/helpers/stats.helper';
+import { HOURS_PER_WEEK } from '../organizations/constants/work-schedule.constant';
+import { offHoursFraction, scheduleKey, scheduleWindow } from '../organizations/helpers/work-schedule.helper';
 import {
   K8S_ANALYSIS,
   KARPENTER_POOL_LABEL,
   KUBERNETES_SERVICE,
   MAX_TITLE_LENGTH,
+  MIN_K8S_SCHEDULE_MONTHLY_SAVINGS,
+  SCALE_TO_ZERO_KINDS,
+  SYSTEM_NAMESPACES,
 } from './constants/kubernetes-analysis.constant';
 import {
   formatCpu,
   formatMemory,
+  namespaceResourceId,
   nodeGroupResourceId,
   perPod,
   roundUpTo,
@@ -20,7 +26,9 @@ import {
 import {
   KubernetesAnalysis,
   KubernetesAnalyzerResult,
+  KubernetesNamespaceAnalysis,
   KubernetesNodeGroupAnalysis,
+  NamespaceAnalyzerInput,
   KubernetesWorkloadAnalysis,
   NodeGroupAnalyzerInput,
   ResourceAmount,
@@ -75,6 +83,7 @@ export class KubernetesAnalyzerService {
       name: label,
       clusterId: input.clusterId,
       clusterName: input.clusterName,
+      environment: input.environment,
       finding: 'OPTIMIZED',
       current: {
         monthlyCost: null,
@@ -297,6 +306,7 @@ export class KubernetesAnalyzerService {
       name: `${input.clusterName} ${groupName}`,
       clusterId: input.clusterId,
       clusterName: input.clusterName,
+      environment: input.environment,
       finding: 'OPTIMIZED',
       current: {
         monthlyCost: costs ? round(sum(costs)) : null,
@@ -314,17 +324,17 @@ export class KubernetesAnalyzerService {
     };
     if (count === 0 || !allocCpu || !allocMemory || !peakCpu || !peakMemory || days < K8S_ANALYSIS.minUsageDays) {
       analysis.finding = 'INSUFFICIENT_DATA';
-      return { analysis, drafts: [] };
+      return this.withSchedule(analysis, input, []);
     }
 
     const capCpu = Math.min(...allocCpu) * K8S_ANALYSIS.nodeTargetFill;
     const capMemory = Math.min(...allocMemory) * K8S_ANALYSIS.nodeTargetFill;
-    if (capCpu <= 0 || capMemory <= 0) return { analysis, drafts: [] };
+    if (capCpu <= 0 || capMemory <= 0) return this.withSchedule(analysis, input, []);
     const totalCpu = sum(peakCpu);
     const totalMemory = sum(peakMemory);
     const needed = Math.max(1, Math.ceil(totalCpu / capCpu - 1e-9), Math.ceil(totalMemory / capMemory - 1e-9)) + K8S_ANALYSIS.spareNodes;
     const removable = count - needed;
-    if (removable <= 0) return { analysis, drafts: [] };
+    if (removable <= 0) return this.withSchedule(analysis, input, []);
 
     analysis.finding = 'OVER_PROVISIONED';
     analysis.recommendedNodes = needed;
@@ -348,7 +358,80 @@ export class KubernetesAnalyzerService {
       confidence: days >= K8S_ANALYSIS.windowDays ? Level.HIGH : Level.MEDIUM,
       targetKey: `NODES=${needed}`,
     };
-    return { analysis, drafts: [this.draft(analysis, found, input.currency, 'savings unknown')] };
+    return this.withSchedule(analysis, input, [this.draft(analysis, found, input.currency, 'savings unknown')]);
+  }
+
+  analyzeNamespace(input: NamespaceAnalyzerInput): KubernetesAnalyzerResult {
+    const workloads = input.workloads.filter((w) => SCALE_TO_ZERO_KINDS.includes(w.kind) && w.podCount > 0);
+    const requests = {
+      cpuCores: round(workloads.reduce((s, w) => s + (w.requestsCpu ?? 0), 0), 3),
+      memoryBytes: workloads.reduce((s, w) => s + (w.requestsMemoryBytes ?? 0), 0),
+    };
+    const analysis: KubernetesNamespaceAnalysis = {
+      kind: 'KUBERNETES',
+      scope: 'NAMESPACE',
+      resourceId: namespaceResourceId(input.clusterId, input.namespace),
+      resourceArn: null,
+      name: `${input.clusterName} ${input.namespace}`,
+      clusterId: input.clusterId,
+      clusterName: input.clusterName,
+      environment: input.environment,
+      finding: 'OPTIMIZED',
+      current: { monthlyCost: null, namespace: input.namespace, workloads: workloads.length, pods: workloads.reduce((s, w) => s + w.podCount, 0), requests },
+      recommendation: null,
+      savings: null,
+      analyzedAt: (input.now ?? new Date()).toISOString(),
+    };
+    const off = offHoursFraction(input.schedule);
+    const enough = requests.cpuCores >= K8S_ANALYSIS.minFreedCpuCores || requests.memoryBytes >= K8S_ANALYSIS.minFreedMemoryBytes;
+    if (input.environment.environment !== 'NON_PRODUCTION' || SYSTEM_NAMESPACES.includes(input.namespace) || off <= 0 || !enough) return { analysis, drafts: [] };
+    const window = scheduleWindow(input.schedule);
+    const found: Found = {
+      type: RecommendationType.K8S_NAMESPACE_SCHEDULE,
+      title: `Scale namespace ${input.namespace} to zero outside business hours in cluster ${input.clusterName} (${window})`,
+      reasons: [
+        `Non-production namespace (${input.environment.detail})`,
+        `${workloads.length} Deployment(s) and StatefulSet(s) with ${analysis.current.pods} pod(s) reserve ${formatCpu(requests.cpuCores)} CPU and ${formatMemory(requests.memoryBytes)} memory`,
+        `Outside ${window} (${input.schedule.timezone}) is ${Math.round(off * 100)}% of the week: scaling to zero frees these requests so the cluster autoscaler or Karpenter can remove nodes`,
+        'Use kube-downscaler (downscaler/uptime annotation on the namespace) or a KEDA cron scaler; DaemonSets keep running',
+        'StatefulSets keep their volumes; check jobs, consumers and pipelines that must run at night',
+      ],
+      savings: null,
+      current: null,
+      risk: Level.LOW,
+      confidence: input.environment.source === 'NAME' ? Level.MEDIUM : Level.HIGH,
+      targetKey: scheduleKey(input.schedule),
+    };
+    return { analysis, drafts: [this.draft({ ...analysis, finding: 'OFF_HOURS' }, found, input.currency, 'savings come from the nodes the cluster removes')] };
+  }
+
+  private withSchedule(analysis: KubernetesNodeGroupAnalysis, input: NodeGroupAnalyzerInput, drafts: RecommendationDraft[]): KubernetesAnalyzerResult {
+    const off = offHoursFraction(input.schedule);
+    if (input.environment.environment !== 'NON_PRODUCTION' || off <= 0 || input.nodes.length === 0) return { analysis, drafts };
+    const monthly = analysis.current.monthlyCost;
+    const savings = monthly === null ? null : round(monthly * off);
+    if (savings !== null && savings < MIN_K8S_SCHEDULE_MONTHLY_SAVINGS) return { analysis, drafts };
+    const window = scheduleWindow(input.schedule);
+    const groupName = input.pool?.value ?? input.instanceType ?? 'node group';
+    const found: Found = {
+      type: RecommendationType.K8S_NODE_GROUP_SCHEDULE,
+      title: `Scale node group ${groupName} in cluster ${input.clusterName} to zero outside business hours (${window})`,
+      reasons: [
+        `Non-production nodes (${input.environment.detail})`,
+        `Running only ${window} (${input.schedule.timezone}) is ${input.schedule.hoursPerWeek}h of ${HOURS_PER_WEEK}h per week, about ${Math.round(off * 100)}% less for ${input.nodes.length} node(s)`,
+        input.pool?.label === KARPENTER_POOL_LABEL
+          ? 'Karpenter removes the nodes once the pods are gone: scale the workloads to zero off-hours (kube-downscaler or KEDA cron) and keep consolidation on'
+          : 'Add scheduled actions to the node group Auto Scaling group (desired and minimum 0 at night, back in the morning) and scale the workloads to zero first (kube-downscaler or KEDA cron)',
+        'Pods on these nodes stop outside business hours; StatefulSet volumes stay, and the first pods take a few minutes to start in the morning',
+        'If a Reserved Instance or Savings Plan covers these nodes, stopping them saves nothing until the commitment ends',
+      ],
+      savings,
+      current: monthly,
+      risk: Level.LOW,
+      confidence: input.environment.source === 'NAME' ? Level.MEDIUM : Level.HIGH,
+      targetKey: scheduleKey(input.schedule),
+    };
+    return { analysis, drafts: [...drafts, this.draft({ ...analysis, finding: 'OFF_HOURS', recommendation: null, savings: null }, found, input.currency, 'unknown, some node prices are unavailable')] };
   }
 
   private draft<T extends KubernetesAnalysis>(analysis: T, found: Found, currency: string, unknownSavings: string): RecommendationDraft & { analysis: T } {

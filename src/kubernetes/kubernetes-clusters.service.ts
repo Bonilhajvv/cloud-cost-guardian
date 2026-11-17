@@ -21,7 +21,10 @@ import { KubernetesNode } from './entities/kubernetes-node.entity';
 import { KubernetesWorkload } from './entities/kubernetes-workload.entity';
 import { renderAgentManifest, renderHelmValues } from './helpers/manifest.helper';
 import { generateInstallToken, parseAgentToken, sha256, signAgentToken } from './helpers/tokens.helper';
-import { AgentPrincipal, ClusterSuggestion, ManifestParams } from './interfaces/kubernetes.interface';
+import { AgentPrincipal, ClusterEnvironmentView, ClusterSuggestion, ManifestParams, NamespaceView } from './interfaces/kubernetes.interface';
+import { ManualEnvironment } from '../aws/core/interfaces/environment.interface';
+import { clusterEnvironment, namespaceEnvironment } from './helpers/kubernetes-environment.helper';
+import { ListNamespacesDto } from './dto/list-namespaces.dto';
 import { deriveClusterName } from './helpers/cluster-name.helper';
 
 @Injectable()
@@ -83,6 +86,44 @@ export class KubernetesClustersService {
       take: query.limit,
     });
     return paginate(items, total, query);
+  }
+
+  async listNamespaces(organizationId: string, id: string, query: ListNamespacesDto): Promise<NamespaceView[]> {
+    const cluster = await this.get(organizationId, id);
+    const rows = await this.workloads
+      .createQueryBuilder('w')
+      .select('w.namespace', 'namespace')
+      .addSelect('COUNT(*)', 'workloads')
+      .addSelect('COALESCE(SUM(w.podCount), 0)', 'pods')
+      .where('w.clusterId = :id', { id })
+      .andWhere('w.organizationId = :organizationId', { organizationId })
+      .groupBy('w.namespace')
+      .orderBy('w.namespace', 'ASC')
+      .getRawMany<{ namespace: string; workloads: string; pods: string }>();
+    return rows
+      .map((r) => ({ namespace: r.namespace, workloads: Number(r.workloads), pods: Number(r.pods), environment: namespaceEnvironment(cluster, r.namespace) }))
+      .filter((n) => !query.environment || n.environment.environment === query.environment);
+  }
+
+  async setEnvironment(user: TenantUser, id: string, environment: ManualEnvironment | null): Promise<ClusterEnvironmentView> {
+    const cluster = await this.get(user.organizationId, id);
+    cluster.environment = environment;
+    await this.clusters.update({ id }, { environment });
+    this.logger.log({ msg: 'Kubernetes cluster environment set', clusterId: id, organizationId: user.organizationId, environment });
+    return { clusterId: id, environment: clusterEnvironment(cluster), namespaces: cluster.namespaceEnvironments };
+  }
+
+  async setNamespaceEnvironments(user: TenantUser, id: string, items: { namespace: string; environment: ManualEnvironment | null }[]): Promise<ClusterEnvironmentView> {
+    const cluster = await this.get(user.organizationId, id);
+    const namespaces = { ...cluster.namespaceEnvironments };
+    for (const item of items) {
+      if (item.environment) namespaces[item.namespace] = item.environment;
+      else delete namespaces[item.namespace];
+    }
+    cluster.namespaceEnvironments = namespaces;
+    await this.clusters.update({ id }, { namespaceEnvironments: namespaces });
+    this.logger.log({ msg: 'Kubernetes namespace environments set', clusterId: id, organizationId: user.organizationId, namespaces: items.length });
+    return { clusterId: id, environment: clusterEnvironment(cluster), namespaces };
   }
 
   async revoke(user: TenantUser, id: string): Promise<void> {

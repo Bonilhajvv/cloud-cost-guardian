@@ -1,10 +1,12 @@
 import { Level, RecommendationSource, RecommendationType } from '../../common/enums';
 import { RecommendationDraft } from '../../aws/core/interfaces/recommendation-draft.interface';
+import { EnvironmentInfo } from '../../aws/core/interfaces/environment.interface';
+import { EffectiveWorkSchedule } from '../../organizations/interfaces/work-schedule.interface';
 import { KubernetesCluster } from '../entities/kubernetes-cluster.entity';
 import { KubernetesNode } from '../entities/kubernetes-node.entity';
 import { KubernetesWorkload } from '../entities/kubernetes-workload.entity';
 
-export type KubernetesFinding = 'OVER_PROVISIONED' | 'UNDER_PROVISIONED' | 'OPTIMIZED' | 'INSUFFICIENT_DATA';
+export type KubernetesFinding = 'OVER_PROVISIONED' | 'UNDER_PROVISIONED' | 'OFF_HOURS' | 'OPTIMIZED' | 'INSUFFICIENT_DATA';
 
 export type SizingAction = 'DECREASE' | 'INCREASE' | 'SET';
 
@@ -45,6 +47,7 @@ interface KubernetesAnalysisBase {
   name: string;
   clusterId: string;
   clusterName: string;
+  environment: EnvironmentInfo;
   finding: KubernetesFinding;
   recommendation: {
     type: RecommendationType;
@@ -87,7 +90,18 @@ export interface KubernetesNodeGroupAnalysis extends KubernetesAnalysisBase {
   recommendedNodes: number | null;
 }
 
-export type KubernetesAnalysis = KubernetesWorkloadAnalysis | KubernetesNodeGroupAnalysis;
+export interface KubernetesNamespaceAnalysis extends KubernetesAnalysisBase {
+  scope: 'NAMESPACE';
+  current: {
+    monthlyCost: null;
+    namespace: string;
+    workloads: number;
+    pods: number;
+    requests: ResourceAmount;
+  };
+}
+
+export type KubernetesAnalysis = KubernetesWorkloadAnalysis | KubernetesNodeGroupAnalysis | KubernetesNamespaceAnalysis;
 
 export interface WorkloadAnalyzerInput {
   clusterId: string;
@@ -106,6 +120,7 @@ export interface WorkloadAnalyzerInput {
   };
   peak: UsagePeak | null;
   containerPeaks: ReadonlyMap<string, UsagePeak>;
+  environment: EnvironmentInfo;
   currency: string;
   now?: Date;
 }
@@ -125,6 +140,19 @@ export interface NodeGroupAnalyzerInput {
   pool: NodePool | null;
   instanceType: string | null;
   nodes: NodeGroupMember[];
+  environment: EnvironmentInfo;
+  schedule: EffectiveWorkSchedule;
+  currency: string;
+  now?: Date;
+}
+
+export interface NamespaceAnalyzerInput {
+  clusterId: string;
+  clusterName: string;
+  namespace: string;
+  workloads: { kind: string; podCount: number; requestsCpu: number | null; requestsMemoryBytes: number | null }[];
+  environment: EnvironmentInfo;
+  schedule: EffectiveWorkSchedule;
   currency: string;
   now?: Date;
 }

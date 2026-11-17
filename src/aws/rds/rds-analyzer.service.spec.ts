@@ -161,6 +161,13 @@ describe('RdsAnalyzerService', () => {
       expect(analyzer.analyze(input({ instance: db({ multiAz: true, tags: { env: 'production' } }), prices: multi })).drafts).toEqual([]);
       expect(analyzer.analyze(input({ instance: db({ dbInstanceId: 'orders-prd-test', multiAz: true, tags: { env: 'prod' } }), prices: multi })).drafts).toEqual([]);
     });
+
+    it('follows a manual mark over tags and name', () => {
+      const marked = analyzer.analyze(input({ instance: db({ dbInstanceId: 'orders', multiAz: true, tags: { env: 'prod' } }), prices: multi, environmentOverride: 'NON_PRODUCTION' }));
+      expect(marked.analysis.environment).toMatchObject({ environment: 'NON_PRODUCTION', source: 'MANUAL' });
+      expect(marked.drafts[0]).toMatchObject({ type: RecommendationType.RDS_MULTI_AZ, confidence: Level.HIGH });
+      expect(analyzer.analyze(input({ instance: db({ dbInstanceId: 'orders-hml', multiAz: true }), prices: multi, environmentOverride: 'PRODUCTION' })).drafts).toEqual([]);
+    });
   });
 
   describe('Extended Support', () => {
