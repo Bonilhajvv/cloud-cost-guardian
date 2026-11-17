@@ -1,5 +1,6 @@
-import { IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { IsIn, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 import { PaginationQueryDto } from '../../common/dto/pagination.dto';
+import { ENVIRONMENT_FILTERS } from '../constants/environment.constant';
 
 export class ListResourcesDto extends PaginationQueryDto {
   @IsOptional()
@@ -25,4 +26,8 @@ export class ListResourcesDto extends PaginationQueryDto {
   @IsString()
   @MaxLength(200)
   search?: string;
+
+  @IsOptional()
+  @IsIn(ENVIRONMENT_FILTERS)
+  environment?: (typeof ENVIRONMENT_FILTERS)[number];
 }

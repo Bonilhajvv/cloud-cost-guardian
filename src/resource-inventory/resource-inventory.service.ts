@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, LessThan, Repository } from 'typeorm';
 import { isEc2Analysis } from '../aws/core/helpers/resource-analysis.helper';
+import { detectEnvironment } from '../aws/core/helpers/environment.helper';
 import { AwsAccountRef } from '../aws/core/interfaces/aws-account-ref.interface';
 import { AwsResourceData } from '../aws/resources/interfaces/aws-resource-data.interface';
 import { chunk } from '../common/helpers/stats.helper';
@@ -168,8 +169,28 @@ export class ResourceInventoryService {
       .skip(query.skip)
       .take(query.limit);
     if (query.awsAccountId) qb.andWhere('r.awsAccountId = :awsAccountId', { awsAccountId: query.awsAccountId });
+    if (query.environment) qb.andWhere(`COALESCE(r.metadata->'analysis'->'environment'->>'environment', 'UNKNOWN') = :environment`, { environment: query.environment });
     const [items, total] = await qb.getManyAndCount();
     return paginate(items, total, query);
+  }
+
+  async setEnvironment(organizationId: string, id: string, environment: AwsResource['environment']): Promise<AwsResource> {
+    const resource = await this.get(organizationId, id);
+    resource.environment = environment;
+    const analysis = resource.metadata.analysis;
+    if (analysis && isEc2Analysis(analysis)) {
+      resource.metadata = { ...resource.metadata, analysis: { ...analysis, environment: detectEnvironment(resource.name, resource.metadata.tags ?? {}, environment) } };
+    }
+    const saved = await this.repo.save(resource);
+    this.logger.log({ msg: 'Resource environment set', organizationId, resourceId: resource.resourceId, environment });
+    return saved;
+  }
+
+  async setEnvironments(organizationId: string, items: { id: string; environment: AwsResource['environment'] }[]): Promise<{ updated: number; notFound: string[] }> {
+    const found = await this.repo.find({ where: { organizationId, id: In(items.map((i) => i.id)) }, select: { id: true } });
+    const known = new Set(found.map((r) => r.id));
+    for (const item of items.filter((i) => known.has(i.id))) await this.setEnvironment(organizationId, item.id, item.environment);
+    return { updated: known.size, notFound: items.filter((i) => !known.has(i.id)).map((i) => i.id) };
   }
 
   async metricsCoverage(organizationId: string): Promise<MetricsCoverage> {

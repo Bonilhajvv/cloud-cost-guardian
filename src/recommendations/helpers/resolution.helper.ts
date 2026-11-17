@@ -13,26 +13,26 @@ import {
 } from '../interfaces/recommendation-metadata.interface';
 
 function configuredType(analysis: ResourceAnalysis): string {
-  if (analysis.kind === 'COMMITMENT' || analysis.kind === 'NETWORK') return analysis.resourceId;
+  if (analysis.kind === 'COMMITMENT' || analysis.kind === 'NETWORK' || analysis.kind === 'KUBERNETES') return analysis.resourceId;
   if (analysis.kind === 'EBS') return analysis.current.volumeType;
   return analysis.kind === 'RDS' ? analysis.current.instanceClass : analysis.current.instanceType;
 }
 
 function recommendedType(analysis: ResourceAnalysis): string | null {
-  if (!analysis.recommendation || analysis.kind === 'COMMITMENT' || analysis.kind === 'NETWORK') return null;
+  if (!analysis.recommendation || analysis.kind === 'COMMITMENT' || analysis.kind === 'NETWORK' || analysis.kind === 'KUBERNETES') return null;
   if (analysis.kind === 'EBS') return analysis.recommendation.targetVolumeType;
   return analysis.kind === 'RDS' ? analysis.recommendation.instanceClass : analysis.recommendation.instanceType;
 }
 
 function sizeOf(analysis: ResourceAnalysis): (number | null)[] {
-  if (analysis.kind === 'COMMITMENT' || analysis.kind === 'NETWORK') return [null];
+  if (analysis.kind === 'COMMITMENT' || analysis.kind === 'NETWORK' || analysis.kind === 'KUBERNETES') return [null];
   if (analysis.kind === 'EBS') return [analysis.current.sizeGiB];
   return analysis.kind === 'RDS' ? [analysis.current.vcpu] : [analysis.current.vcpu, analysis.current.memoryGb];
 }
 
 function recommendedSizeOf(analysis: ResourceAnalysis): (number | null)[] | null {
   if (analysis.kind === 'EBS') return analysis.recommendation ? [analysis.current.sizeGiB] : null;
-  if (analysis.kind === 'RDS' || analysis.kind === 'COMMITMENT' || analysis.kind === 'NETWORK') return null;
+  if (analysis.kind === 'RDS' || analysis.kind === 'COMMITMENT' || analysis.kind === 'NETWORK' || analysis.kind === 'KUBERNETES') return null;
   return analysis.recommendation ? [analysis.recommendation.vcpu, analysis.recommendation.memoryGb] : null;
 }
 
@@ -79,6 +79,9 @@ function changeResolution(previous: ResourceAnalysis, current: ResourceAnalysis)
 export function resolutionFor(previous: ResourceAnalysis | undefined, current: ResourceAnalysis | undefined): RecommendationResolution {
   if (!current) return { reason: 'RESOURCE_REMOVED', finding: null, detail: 'Resource no longer found in the latest scan' };
   const finding = current.finding;
+  if (previous && isEc2Analysis(previous) && previous.recommendation?.type === RecommendationType.EC2_SCHEDULE && isEc2Analysis(current) && current.scheduler) {
+    return { reason: 'APPLIED', finding, detail: `Scheduler tag found: ${current.scheduler}` };
+  }
   if (previous && typeChanged(previous, current)) return changeResolution(previous, current);
   if (!isEc2Analysis(current)) return { reason: 'NO_LONGER_RECOMMENDED', finding, detail: `Latest analysis finding: ${finding}` };
 
@@ -136,6 +139,7 @@ export function resolutionOutcome(
     if (!REMOVAL_TYPES.includes(type)) return none;
     return { implemented: true, realized: removedResourceSavings(type, previous, recCurrentMonthlyCost, isPresent) };
   }
+  if (type === RecommendationType.EC2_SCHEDULE) return { implemented: resolution.reason === 'APPLIED', realized: null };
   if (!previous || !current || !resolution.change) return none;
   const from = onDemandMonthly(previous);
   const to = onDemandMonthly(current);

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const agentVersion = "0.2.0"
+const agentVersion = "0.3.0"
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))

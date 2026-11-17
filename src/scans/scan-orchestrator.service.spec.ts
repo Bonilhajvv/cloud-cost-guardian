@@ -17,6 +17,8 @@ import { CostSyncService } from '../cost-reports/cost-sync.service';
 import { AdvisoryLockService } from '../database/advisory-lock.service';
 import { LockResult } from '../database/interfaces/lock-result.interface';
 import { CommitmentSyncService } from './commitment-sync.service';
+import { Ec2ScheduleScanService } from './ec2-schedule-scan.service';
+import { KubernetesScanService } from './kubernetes-scan.service';
 import { NetworkScanService } from './network-scan.service';
 import { RdsScanService } from './rds-scan.service';
 import { KubernetesMetricsService } from '../kubernetes/kubernetes-metrics.service';
@@ -161,6 +163,8 @@ function build() {
       scan: jest.fn().mockResolvedValue({ elasticIps: 0, natGateways: 0, loadBalancers: 0, publicIpv4: 0, unavailable: [], failures: [] }),
       analyze: jest.fn().mockResolvedValue({ analyzed: 0, findings: {}, created: 0, updated: 0, resolved: 0, skipped: 0 }),
     },
+    scheduleScan: { analyze: jest.fn().mockResolvedValue({ analyzed: 0, findings: {}, created: 0, updated: 0, resolved: 0, skipped: 0 }) },
+    kubernetesScan: { analyze: jest.fn().mockResolvedValue({ analyzed: 0, findings: {}, created: 0, updated: 0, resolved: 0, skipped: 0 }) },
     rdsScan: {
       scan: jest.fn().mockResolvedValue({ databases: 0, failures: [] }),
       syncOptimizer: jest.fn().mockResolvedValue({ regions: {}, recommendations: 0, failures: [] }),
@@ -188,6 +192,8 @@ function build() {
     deps.rdsScan as unknown as RdsScanService,
     deps.commitmentSync as unknown as CommitmentSyncService,
     deps.networkScan as unknown as NetworkScanService,
+    deps.kubernetesScan as unknown as KubernetesScanService,
+    deps.scheduleScan as unknown as Ec2ScheduleScanService,
   );
   return { orchestrator, deps, store };
 }

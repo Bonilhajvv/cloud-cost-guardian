@@ -49,6 +49,8 @@ export interface AnalysisDetails {
   ebs?: Omit<AnalysisDetails, 'ebs' | 'rds' | 'network'>;
   rds?: Omit<AnalysisDetails, 'ebs' | 'rds' | 'network'>;
   network?: Omit<AnalysisDetails, 'ebs' | 'rds' | 'network'>;
+  kubernetes?: Omit<AnalysisDetails, 'ebs' | 'rds' | 'network' | 'kubernetes'>;
+  schedule?: Omit<AnalysisDetails, 'ebs' | 'rds' | 'network' | 'kubernetes' | 'schedule'>;
   analyzed: number;
   findings: Record<string, number>;
   created: number;

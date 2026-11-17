@@ -8,6 +8,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { OrganizationStatus } from '../../common/enums';
+import { WorkSchedule } from '../interfaces/work-schedule.interface';
 import { OrganizationUser } from './organization-user.entity';
 
 @Entity('organizations')
@@ -28,6 +29,9 @@ export class Organization {
 
   @Column({ type: 'timestamptz', nullable: true })
   suspendedAt: Date | null;
+
+  @Column({ type: 'jsonb', nullable: true })
+  workSchedule: WorkSchedule | null;
 
   @OneToMany(() => OrganizationUser, (m) => m.organization)
   members: OrganizationUser[];

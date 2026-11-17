@@ -15,7 +15,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { MAX_REPORT_NODES, MAX_REPORT_WORKLOADS } from '../constants/kubernetes.constant';
+import { MAX_REPORT_CONTAINERS, MAX_REPORT_NODES, MAX_REPORT_WORKLOADS } from '../constants/kubernetes.constant';
 
 export class ResourceAmountDto {
   @IsOptional()
@@ -105,6 +105,25 @@ export class ReportHpaDto {
   maxReplicas: number;
 }
 
+export class ReportContainerDto {
+  @IsString()
+  @MaxLength(253)
+  name: string;
+
+  @ValidateNested()
+  @Type(() => ResourceAmountDto)
+  requests: ResourceAmountDto;
+
+  @ValidateNested()
+  @Type(() => ResourceAmountDto)
+  limits: ResourceAmountDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ResourceAmountDto)
+  usage?: ResourceAmountDto;
+}
+
 export class ReportWorkloadDto {
   @IsString()
   @MaxLength(253)
@@ -144,6 +163,13 @@ export class ReportWorkloadDto {
   @ValidateNested()
   @Type(() => ReportHpaDto)
   hpa?: ReportHpaDto | null;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(MAX_REPORT_CONTAINERS)
+  @ValidateNested({ each: true })
+  @Type(() => ReportContainerDto)
+  containers?: ReportContainerDto[];
 }
 
 export class AgentReportDto {

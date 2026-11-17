@@ -1,5 +1,6 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { numericTransformer } from '../../common/helpers/numeric.transformer';
+import { ContainerSpec } from '../interfaces/kubernetes-analysis.interface';
 import { KubernetesCluster } from './kubernetes-cluster.entity';
 
 const cores = { type: 'numeric' as const, precision: 10, scale: 3, nullable: true, transformer: numericTransformer };
@@ -57,6 +58,9 @@ export class KubernetesWorkload {
 
   @Column({ type: 'jsonb', nullable: true })
   hpa: { minReplicas: number | null; maxReplicas: number } | null;
+
+  @Column({ type: 'jsonb', nullable: true })
+  containers: ContainerSpec[] | null;
 
   @Index()
   @Column({ type: 'timestamptz' })

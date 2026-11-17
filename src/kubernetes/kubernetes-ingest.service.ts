@@ -3,17 +3,21 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, LessThan, Repository } from 'typeorm';
 import { AuditService } from '../audit/audit.service';
 import { AuditAction, KubernetesClusterStatus } from '../common/enums';
+import { toIsoDate } from '../common/helpers/date.helper';
 import { chunk } from '../common/helpers/stats.helper';
 import { ResourceInventoryService } from '../resource-inventory/resource-inventory.service';
 import { GIB, INGEST_BATCH_SIZE } from './constants/kubernetes.constant';
 import { AgentReportDto, ReportNodeDto } from './dto/agent-report.dto';
 import { KubernetesCluster } from './entities/kubernetes-cluster.entity';
+import { KubernetesContainerUsageDaily } from './entities/kubernetes-container-usage-daily.entity';
 import { KubernetesNode } from './entities/kubernetes-node.entity';
 import { KubernetesUsageSample } from './entities/kubernetes-usage-sample.entity';
 import { KubernetesWorkload } from './entities/kubernetes-workload.entity';
+import { KubernetesWorkloadUsageDaily } from './entities/kubernetes-workload-usage-daily.entity';
 import { detectProvider } from './helpers/provider.helper';
 import { ipsToResolve, resolveNodeInstanceIds } from './helpers/node-instance.helper';
 import { AgentPrincipal } from './interfaces/kubernetes.interface';
+import { containerSpecs } from './helpers/container-spec.helper';
 
 @Injectable()
 export class KubernetesIngestService {
@@ -52,6 +56,7 @@ export class KubernetesIngestService {
       await manager.delete(KubernetesNode, { clusterId: cluster.id, lastSeenAt: LessThan(seenAt) });
       await manager.delete(KubernetesWorkload, { clusterId: cluster.id, lastSeenAt: LessThan(seenAt) });
       await this.insertSamples(manager, agent, report.nodes, instanceIds, seenAt);
+      await this.upsertWorkloadUsage(manager, agent, report, seenAt);
     });
 
     const linkedInstances = await this.linkInstances(agent, cluster.name, report.nodes, instanceIds);
@@ -150,11 +155,12 @@ export class KubernetesIngestService {
             usageCpu: w.usage?.cpuCores ?? null,
             usageMemoryBytes: w.usage?.memoryBytes ?? null,
             hpa: w.hpa ? { minReplicas: w.hpa.minReplicas ?? null, maxReplicas: w.hpa.maxReplicas } : null,
+            containers: w.containers ? containerSpecs(w.containers) : null,
             lastSeenAt: seenAt,
           })),
         )
         .orUpdate(
-          ['desiredReplicas', 'podCount', 'requestsCpu', 'requestsMemoryBytes', 'limitsCpu', 'limitsMemoryBytes', 'usageCpu', 'usageMemoryBytes', 'hpa', 'lastSeenAt'],
+          ['desiredReplicas', 'podCount', 'requestsCpu', 'requestsMemoryBytes', 'limitsCpu', 'limitsMemoryBytes', 'usageCpu', 'usageMemoryBytes', 'hpa', 'containers', 'lastSeenAt'],
           ['clusterId', 'namespace', 'kind', 'name'],
         )
         .execute();
@@ -171,6 +177,7 @@ export class KubernetesIngestService {
         instanceId: instanceIds.get(n.name) ?? null,
         cpuCores: n.usage?.cpuCores ?? null,
         memoryBytes: n.usage?.memoryBytes ?? null,
+        requestsCpu: n.requests.cpuCores ?? null,
         requestsMemoryBytes: n.requests.memoryBytes ?? null,
         allocatableMemoryBytes: n.allocatable.memoryBytes ?? null,
         fsUsedBytes: n.filesystem?.usedBytes ?? null,
@@ -178,6 +185,67 @@ export class KubernetesIngestService {
         sampledAt: seenAt,
       }));
     for (const batch of chunk(rows, INGEST_BATCH_SIZE)) await manager.insert(KubernetesUsageSample, batch);
+  }
+
+  private async upsertWorkloadUsage(manager: EntityManager, agent: AgentPrincipal, report: AgentReportDto, seenAt: Date): Promise<void> {
+    const day = toIsoDate(seenAt);
+    const rows = report.workloads
+      .filter((w) => w.usage && w.podCount > 0)
+      .map((w) => {
+        const cpu = w.usage?.cpuCores ?? null;
+        const memory = w.usage?.memoryBytes ?? null;
+        return {
+          organizationId: agent.organizationId,
+          clusterId: agent.clusterId,
+          namespace: w.namespace,
+          kind: w.kind,
+          name: w.name,
+          day,
+          maxCpuPerPod: cpu === null ? null : cpu / w.podCount,
+          maxMemoryPerPodBytes: memory === null ? null : Math.round(memory / w.podCount),
+          samples: 1,
+        };
+      });
+    const table = 'kubernetes_workload_usage_daily';
+    for (const batch of chunk(rows, INGEST_BATCH_SIZE)) {
+      await manager
+        .createQueryBuilder()
+        .insert()
+        .into(KubernetesWorkloadUsageDaily)
+        .values(batch)
+        .onConflict(
+          `("clusterId", "namespace", "kind", "name", "day") DO UPDATE SET "maxCpuPerPod" = GREATEST(${table}."maxCpuPerPod", EXCLUDED."maxCpuPerPod"), "maxMemoryPerPodBytes" = GREATEST(${table}."maxMemoryPerPodBytes", EXCLUDED."maxMemoryPerPodBytes"), "samples" = ${table}."samples" + 1`,
+        )
+        .execute();
+    }
+    const containerRows = report.workloads.flatMap((w) =>
+      (w.containers ?? [])
+        .filter((c) => c.usage)
+        .map((c) => ({
+          organizationId: agent.organizationId,
+          clusterId: agent.clusterId,
+          namespace: w.namespace,
+          kind: w.kind,
+          name: w.name,
+          container: c.name,
+          day,
+          maxCpuCores: c.usage?.cpuCores ?? null,
+          maxMemoryBytes: c.usage?.memoryBytes ?? null,
+          samples: 1,
+        })),
+    );
+    const containerTable = 'kubernetes_container_usage_daily';
+    for (const batch of chunk(containerRows, INGEST_BATCH_SIZE)) {
+      await manager
+        .createQueryBuilder()
+        .insert()
+        .into(KubernetesContainerUsageDaily)
+        .values(batch)
+        .onConflict(
+          `("clusterId", "namespace", "kind", "name", "container", "day") DO UPDATE SET "maxCpuCores" = GREATEST(${containerTable}."maxCpuCores", EXCLUDED."maxCpuCores"), "maxMemoryBytes" = GREATEST(${containerTable}."maxMemoryBytes", EXCLUDED."maxMemoryBytes"), "samples" = ${containerTable}."samples" + 1`,
+        )
+        .execute();
+    }
   }
 
   private async linkInstances(agent: AgentPrincipal, clusterName: string, nodes: ReportNodeDto[], instanceIds: Map<string, string | null>): Promise<number> {

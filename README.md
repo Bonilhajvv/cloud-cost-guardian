@@ -30,7 +30,7 @@ RESOURCES  Resource Explorer (fallback: DescribeRegions + DescribeInstances) →
 COSTS      GetCostAndUsage (mensal/diário por serviço) + WithResources (14d EC2) + Forecast → CostSnapshot
            → Savings Plans e RI de RDS (recomendação, cobertura e utilização, no máximo 1x por dia) → aws_accounts.commitments
 OPTIMIZER  GetEC2InstanceRecommendations e GetRDSDatabaseRecommendations por região
-ANALYSIS   Postgres → analyzers de EBS, EC2 e RDS → metadata.analysis + Recommendation
+ANALYSIS   Postgres → analyzers de EBS, EC2, RDS, rede e Kubernetes → metadata.analysis + Recommendation
 ```
 
 Cada etapa grava no Postgres. O analyzer só lê o banco, então reprocessar não custa chamadas AWS. O frontend nunca dispara chamada AWS.
@@ -92,17 +92,18 @@ GET  /kubernetes-clusters/:id           →  status CONNECTED, nós, pods, vers�
 
 - **Tokens:** o link de instalação é de uso único e expira em 24h; morre na primeira conexão. O token do agente é um HMAC (`AGENT_TOKEN_SECRET`) ligado ao cluster e a uma versão. `DELETE /kubernetes-clusters/:id` revoga o token na hora; `POST /:id/install` gera um link novo.
 - **RBAC:** só `get`, `list` e `watch` em nodes, pods, workloads, HPA e `metrics.k8s.io`, mais `get` em `nodes/stats`. Não lê secrets nem configmaps, e só repassa labels de topologia e instância.
+- **Containers:** a partir da 0.3.0, o agente envia por workload cada container com request, limit e o maior uso entre os pods. Isso permite recomendar request por container.
 - **Disco do nó:** a partir da 0.2.0, o agente lê o uso do filesystem de cada nó no kubelet (`https://<IP do nó>:10250/stats/summary`, permissão `nodes/stats`, certificado do kubelet não verificado, como no metrics-server com `--kubelet-insecure-tls`). Esse dado alimenta a recomendação de aumentar disco quando a EC2 não tem CloudWatch Agent. Uma NetworkPolicy que bloqueie a porta 10250 desliga só essa leitura.
 - **Correlação:** o `spec.providerID` (`aws:///…/i-…`) liga o nó à EC2. A memória real do nó entra na análise como fonte `KUBERNETES_AGENT`, e o P95 usa o maior valor entre uso real e requests dos pods. Assim o veredito das opções sai `FITS` ou `DOES_NOT_FIT` em vez de `UNKNOWN`.
 - **Descoberta:** `GET /kubernetes-clusters/suggestions` lista clusters detectados nas EC2 que ainda não foram conectados.
-- **Saúde:** um cluster sem relatório por 15 min vira `STALE` (job a cada 5 min). Amostras com mais de 30 dias são apagadas diariamente.
+- **Saúde:** um cluster sem relatório por 15 min vira `STALE` (job a cada 5 min). Amostras com mais de 30 dias (por nó e o pico diário por workload) são apagadas diariamente.
 
 Código do agente em `agents/k8s-agent` (Go, só biblioteca padrão, imagem distroless de cerca de 11 MB) e Helm chart em `agents/k8s-agent/chart`.
 
 ```bash
 cd agents/k8s-agent && go test ./...
-docker build -t ghcr.io/your-org/ccg-k8s-agent:0.2.0 agents/k8s-agent
-helm package agents/k8s-agent/chart && helm push ccg-k8s-agent-0.2.0.tgz oci://ghcr.io/your-org/charts
+docker build -t ghcr.io/your-org/ccg-k8s-agent:0.3.0 agents/k8s-agent
+helm package agents/k8s-agent/chart && helm push ccg-k8s-agent-0.3.0.tgz oci://ghcr.io/your-org/charts
 ```
 
 Para rodar localmente contra qualquer cluster, sem imagem: `kubectl proxy --port 8001`, depois `K8S_API_URL=http://127.0.0.1:8001 CCG_API_URL=... CCG_AGENT_TOKEN=... go run .`. Nesse modo, o disco do nó é lido pelo proxy do API server com a sua credencial, porque a máquina local não alcança a porta do kubelet.
@@ -117,6 +118,24 @@ Nós Kubernetes são detectados por tags (`kubernetes.io/cluster/*`, `eks:cluste
 - a recomendação manda aplicar via node group ou launch template, drenando o nó antes.
 
 Trocar só a RAM: nas famílias `c`, `m` e `r`, o mesmo tamanho tem a mesma vCPU e 2, 4 ou 8 GiB por vCPU. Quando só a memória não cabe e a CPU P95 fica abaixo de 60%, o upsize vai para a família `r` do mesmo tamanho (ex.: `m6i.large` → `r6i.large`) em vez de dobrar o tamanho. Quando o downsize normal não serve, mas a memória projetada na família `c` fica abaixo de 75%, sai um rightsizing para `c` (ex.: `m6i.large` → `c6i.large`). Na família `t` isso não se aplica: de `micro` a `large` a vCPU é sempre 2, então o tamanho já muda só a RAM.
+
+## Ambiente e desligar fora do expediente
+
+Cada EC2 recebe `metadata.analysis.environment`: `PRODUCTION`, `NON_PRODUCTION` ou `UNKNOWN`, com a origem (`MANUAL`, `TAG` ou `NAME`). A ordem é:
+
+1. Marcação manual, que é opcional e vale mais que tudo.
+2. Tag `Environment`, `env`, `stage` ou `ambiente`. Valor fora das listas conhecidas fica `UNKNOWN`.
+3. Nome com `hml`, `homolog`, `dev`, `staging`, `qa` etc. ou `prd`, `prod`, `producao`. Nome com os dois tipos de termo fica `UNKNOWN`.
+
+`GET /resources/ec2/analysis?environment=UNKNOWN` lista o que o sistema não conseguiu classificar, para o frontend perguntar ao usuário. A resposta vai em `PATCH /resources/:id/environment` ou, em lote (até 500), em `PATCH /resources/environment` com `{ items: [{ id, environment }] }`. `environment: null` apaga a marcação e volta para a detecção automática. A análise é atualizada na hora; a recomendação aparece no scan seguinte. O RDS usa a mesma detecção (sem marcação manual) para `RDS_MULTI_AZ`.
+
+`EC2_SCHEDULE`: EC2 `NON_PRODUCTION` ligada recebe a sugestão de ficar desligada fora do expediente da organização (AWS Instance Scheduler ou EventBridge Scheduler). O padrão é seg-sex 08:00-20:00 `America/Sao_Paulo`, 60h de 168h por semana (cerca de 64% a menos). O expediente pode ser configurado em `GET|PATCH|DELETE /organizations/me/work-schedule` (`days` de 1 = segunda a 7 = domingo, `startHour`, `endHour`, `timezone`).
+
+- A economia é o custo mensal da instância vezes a fração de horas desligada. Abaixo de USD 5/mês, nada é recomendado. Sem preço, a economia fica `null`.
+- Ficam de fora: nós Kubernetes, instâncias de Auto Scaling Group (o ASG recriaria a instância) e instâncias que já têm tag de scheduler (`Schedule`, `InstanceScheduler`).
+- A confiança é `HIGH` com tag ou marcação manual e `MEDIUM` quando o ambiente veio do nome.
+- Quando a tag de scheduler aparece na instância, a recomendação vira `IMPLEMENTED`.
+- A descrição avisa que EBS e Elastic IP continuam cobrando e que instância coberta por RI ou Savings Plan não economiza enquanto o compromisso durar.
 
 ## Regras do analyzer EBS
 
@@ -148,6 +167,17 @@ Desde 2024, a AWS cobra cada IPv4 público (USD 0,005/h, cerca de USD 3,65/mês)
 - Instâncias com IPv4 público não viram recomendação: tirar o IP exigiria um NAT, que custa mais que alguns IPs.
 
 `GET /dashboard/summary` traz `publicIpv4`: quantidade de IPv4 públicos por tipo de dono (`EC2`, `LOAD_BALANCER`, `RDS`, `NAT_GATEWAY`, `OTHER`, `UNATTACHED`) e o custo mensal. Load balancers Classic e Gateway ainda não são analisados.
+
+## Regras do analyzer Kubernetes
+
+Só analisa clusters ligados a uma conta AWS (`awsAccountId`), porque toda `Recommendation` pertence a uma conta. A cada relatório do agente, o pico diário entra em `kubernetes_workload_usage_daily` (por pod) e em `kubernetes_container_usage_daily` (por container, o pod mais carregado), e os requests de CPU e memória de cada nó entram em `kubernetes_usage_samples`. A análise usa os últimos 14 dias e exige pelo menos 7 dias de histórico; com menos, o finding é `INSUFFICIENT_DATA`.
+
+Cada Deployment, StatefulSet ou DaemonSet é dimensionado por container, com a spec guardada em `kubernetes_workloads.containers` (agente 0.3.0+). Sem esses dados, ou com menos de 7 dias de histórico por container, o dimensionamento cai para o total do pod. O request recomendado é o pico + 30%, arredondado para 10m de CPU e 16 MiB de memória (mínimo 64 MiB), e cada recurso recebe uma ação: `DECREASE`, `INCREASE` ou `SET`. O resultado por container fica em `metadata.analysis.sizing` e o total por pod em `recommendedRequestsPerPod`.
+
+- `K8S_WORKLOAD_RIGHTSIZING` (`DECREASE`): pico abaixo de 50% do request, liberando pelo menos 250m de CPU ou 256 MiB somando todos os pods. A economia fica `null`: request reservado não é cobrado sozinho, o dinheiro aparece quando sobram nós. O risco é `MEDIUM` quando a memória diminui (OOMKill) e `LOW` só com CPU.
+- `K8S_WORKLOAD_UNDERSIZED` (`INCREASE` e `SET`): pico acima do request (aumento mínimo de 50m ou 64 MiB) ou container sem request. Sem request, o scheduler conta o container como zero e superlota o nó, e um pod sem nenhum request é `BestEffort`, o primeiro a ser despejado. Memória acima do request põe o pod entre os primeiros despejados; CPU acima do request fica lenta quando o nó está ocupado. Se o novo request passar do limit, a descrição pede para subir o limit, porque o Kubernetes rejeita request maior que limit. Entra em `COST_INCREASE_TYPES`: pode exigir mais nós. A severidade é `MEDIUM` quando envolve memória.
+- Com HPA, as duas avisam que o alvo de utilização de CPU muda junto com o request.
+- `K8S_NODE_CONSOLIDATION`: nós worker agrupados por node pool (`eks.amazonaws.com/nodegroup`, `karpenter.sh/nodepool`, GKE, AKS) e tipo de instância. Soma o maior request de cada nó em 14 dias e calcula quantos nós comportam isso a 85% do allocatable, mais 1 nó de folga. Pods de DaemonSet entram na soma como se não diminuíssem com menos nós, o que deixa a conta conservadora. A economia é o custo dos nós mais baratos que sobram, vindo da análise EC2; sem preço de algum nó, fica `null`. Para Karpenter, a descrição sugere ligar a consolidation do NodePool.
 
 ## Savings Plans e Reserved Instances
 
@@ -225,7 +255,7 @@ O worker é o primeiro candidato a virar microsserviço: mesma imagem, outro ent
 
 ## Endpoints principais
 
-`/auth` (register, login, refresh, me) · `/users` · `/organizations/me` · `/aws-accounts` · `/scans/history` · `/resources` · `/resources/ec2/analysis` · `/costs/{summary,daily,trend,by-resource}` · `/recommendations` (+ `PATCH :id/status`) · `/dashboard/summary` · `/audit-logs` · `/admin/*`
+`/auth` (register, login, refresh, me) · `/users` · `/organizations/me` (+ `/work-schedule`) · `/aws-accounts` · `/scans/history` · `/resources` · `/resources/ec2/analysis` (+ `?environment=`) · `PATCH /resources/:id/environment` · `PATCH /resources/environment` · `/costs/{summary,daily,trend,by-resource}` · `/recommendations` (+ `PATCH :id/status`) · `/dashboard/summary` · `/audit-logs` · `/admin/*`
 
 ## Limitações conhecidas da V1
 
@@ -237,5 +267,6 @@ O worker é o primeiro candidato a virar microsserviço: mesma imagem, outro ent
 - RDS não cobre Aurora, storage nem backup no custo. S3 e Lambda ficam para as próximas fases.
 - Compromissos usam o escopo padrão do Cost Explorer (conta pagadora). Em contas membro de uma AWS Organization, a recomendação pode considerar outras contas. Compras de Savings Plans e RI não são detectadas como "implementadas": a recomendação deixa de aparecer quando a AWS para de recomendá-la.
 - Aumentar disco, desligar Multi-AZ e atualizar a engine não são detectados como "implementados": a recomendação só deixa de aparecer no scan seguinte, sem registrar a economia realizada.
-- Kubernetes: recomendações por workload (requests muito acima do uso) e bin-packing de nós ainda não viram `Recommendation`; os dados já são coletados.
+- Kubernetes: a consolidação de nós usa os requests atuais, sem simular os requests reduzidos pelas recomendações de workload. Clusters sem `awsAccountId` não são analisados. Ajustes de request e nós removidos não são detectados como "implementados": a recomendação só deixa de aparecer no scan seguinte.
+- Ambiente e expediente: `EC2_SCHEDULE` não verifica se a instância trabalha à noite ou no fim de semana (a descrição pede para o usuário confirmar) e calcula a economia sobre o custo atual, que pode já ter desconto de RI ou Savings Plan. O RDS não aceita marcação manual de ambiente, e nós e namespaces do Kubernetes ainda não são classificados por ambiente.
 - Modo EKS sem agente (access entry + IAM) ainda não existe.

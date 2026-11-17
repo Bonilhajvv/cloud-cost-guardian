@@ -1,4 +1,6 @@
 import { Injectable } from '@nestjs/common';
+import { detectEnvironment } from '../core/helpers/environment.helper';
+import { schedulerTag } from './helpers/schedule.helper';
 import { Level, RecommendationSource, RecommendationType } from '../../common/enums';
 import { round } from '../../common/helpers/stats.helper';
 import { Ec2OptimizerOption } from '../optimizer/interfaces/ec2-optimizer.interface';
@@ -68,6 +70,8 @@ export class Ec2AnalyzerService {
       region: instance.region,
       finding: 'OPTIMIZED',
       kubernetes,
+      environment: detectEnvironment(instance.name, instance.tags, input.environmentOverride ?? null),
+      scheduler: schedulerTag(instance.tags),
       current: {
         instanceType: instance.instanceType,
         vcpu: instance.vcpu,

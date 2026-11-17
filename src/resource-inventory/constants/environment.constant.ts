@@ -1,0 +1,5 @@
+export const MANUAL_ENVIRONMENTS = ['PRODUCTION', 'NON_PRODUCTION'] as const;
+
+export const ENVIRONMENT_FILTERS = ['PRODUCTION', 'NON_PRODUCTION', 'UNKNOWN'] as const;
+
+export const MAX_ENVIRONMENT_BATCH = 500;

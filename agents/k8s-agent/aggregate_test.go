@@ -80,6 +80,52 @@ func TestAggregate(t *testing.T) {
 	if workloads[0].PodCount != 2 || *workloads[0].DesiredReplicas != 2 || workloads[0].Usage.MemoryBytes != 300*1024*1024 {
 		t.Errorf("workload = %+v", workloads[0])
 	}
+	if len(workloads[0].Containers) != 1 {
+		t.Fatalf("containers = %+v", workloads[0].Containers)
+	}
+	app := workloads[0].Containers[0]
+	if app.Name != "app" || app.Requests.CPUCores != 0.25 || app.Requests.MemoryBytes != 512*1024*1024 || app.Limits.MemoryBytes != 1024*1024*1024 {
+		t.Errorf("container spec = %+v", app)
+	}
+	if app.Usage == nil || app.Usage.MemoryBytes != 300*1024*1024 || app.Usage.CPUCores != 0.05 {
+		t.Errorf("container usage = %+v", app.Usage)
+	}
+}
+
+func TestContainerPeakAcrossPods(t *testing.T) {
+	var s Snapshot
+	pod := func(name string) kubePod {
+		p := kubePod{}
+		p.Metadata = objectMeta{Name: name, Namespace: "prod", OwnerReferences: []ownerRef{{Kind: "StatefulSet", Name: "db", Controller: ptr(true)}}}
+		p.Spec.Containers = []container{{Name: "postgres"}, {Name: "exporter"}}
+		p.Status.Phase = "Running"
+		return p
+	}
+	s.Pods = []kubePod{pod("db-0"), pod("db-1")}
+	usage := func(name, mem string) podMetrics {
+		pm := podMetrics{}
+		pm.Metadata = objectMeta{Name: name, Namespace: "prod"}
+		pm.Containers = []struct {
+			Name  string            `json:"name"`
+			Usage map[string]string `json:"usage"`
+		}{{Name: "postgres", Usage: map[string]string{"cpu": "100m", "memory": mem}}, {Name: "exporter", Usage: map[string]string{"cpu": "5m", "memory": "20Mi"}}}
+		return pm
+	}
+	s.PodMetrics = []podMetrics{usage("db-0", "1Gi"), usage("db-1", "3Gi")}
+
+	_, workloads := Aggregate(s, true)
+	if len(workloads) != 1 || len(workloads[0].Containers) != 2 {
+		t.Fatalf("workloads = %+v", workloads)
+	}
+	pg := workloads[0].Containers[0]
+	if pg.Name != "postgres" || pg.Usage.MemoryBytes != 3*1024*1024*1024 || pg.Requests.MemoryBytes != 0 {
+		t.Errorf("postgres = %+v usage=%+v", pg, pg.Usage)
+	}
+
+	_, without := Aggregate(s, false)
+	if without[0].Containers[0].Usage != nil {
+		t.Error("container usage must be nil without metrics-server")
+	}
 }
 
 func TestAggregateWithoutMetrics(t *testing.T) {

@@ -8,26 +8,6 @@ export const SUPPORT_ENDING_SOON_DAYS = 180;
 
 export const EXTENDED_SUPPORT_TIER1_YEARS = 2;
 
-export const NON_PRODUCTION_ENVIRONMENTS = [
-  'dev',
-  'develop',
-  'development',
-  'hml',
-  'homolog',
-  'homologacao',
-  'staging',
-  'stage',
-  'stg',
-  'test',
-  'testing',
-  'qa',
-  'uat',
-  'sandbox',
-  'sbx',
-];
-
-export const ENVIRONMENT_TAG_KEYS = ['environment', 'env', 'stage', 'ambiente'];
-
 export const YEAR_MS = 365 * 24 * 60 * 60 * 1000;
 
 export const DAY_MS = 24 * 60 * 60 * 1000;

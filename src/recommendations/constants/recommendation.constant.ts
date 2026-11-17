@@ -52,6 +52,14 @@ export const RDS_RECOMMENDATION_TYPES = [
   RecommendationType.RDS_PUBLIC_ACCESS,
 ] as const;
 
+export const SCHEDULE_RECOMMENDATION_TYPES = [RecommendationType.EC2_SCHEDULE] as const;
+
+export const KUBERNETES_RECOMMENDATION_TYPES = [
+  RecommendationType.K8S_WORKLOAD_RIGHTSIZING,
+  RecommendationType.K8S_NODE_CONSOLIDATION,
+  RecommendationType.K8S_WORKLOAD_UNDERSIZED,
+] as const;
+
 export const OPPORTUNITY_LABELS: Record<RecommendationType, string> = {
   [RecommendationType.EC2_RIGHTSIZING]: 'EC2 Rightsizing',
   [RecommendationType.EC2_IDLE]: 'Idle Resources',
@@ -74,11 +82,15 @@ export const OPPORTUNITY_LABELS: Record<RecommendationType, string> = {
   [RecommendationType.VPC_ENDPOINT_MISSING]: 'Network',
   [RecommendationType.RDS_PUBLIC_ACCESS]: 'RDS',
   [RecommendationType.LAMBDA_RIGHTSIZING]: 'Lambda',
+  [RecommendationType.K8S_WORKLOAD_RIGHTSIZING]: 'Kubernetes',
+  [RecommendationType.K8S_NODE_CONSOLIDATION]: 'Kubernetes',
+  [RecommendationType.K8S_WORKLOAD_UNDERSIZED]: 'Kubernetes',
+  [RecommendationType.EC2_SCHEDULE]: 'Scheduling',
 };
 
 export const REMOVAL_TYPES: readonly RecommendationType[] = [RecommendationType.EC2_IDLE, RecommendationType.EBS_UNUSED, RecommendationType.EC2_STOPPED, RecommendationType.RDS_IDLE, RecommendationType.EIP_UNUSED, RecommendationType.NAT_GATEWAY_IDLE, RecommendationType.LOAD_BALANCER_IDLE];
 
-export const COST_INCREASE_TYPES: readonly RecommendationType[] = [RecommendationType.EC2_UPSIZE, RecommendationType.EBS_EXPAND, RecommendationType.RDS_UPSIZE];
+export const COST_INCREASE_TYPES: readonly RecommendationType[] = [RecommendationType.EC2_UPSIZE, RecommendationType.EBS_EXPAND, RecommendationType.RDS_UPSIZE, RecommendationType.K8S_WORKLOAD_UNDERSIZED];
 
 export const TRACKED_STATUSES = [...POTENTIAL_STATUSES, RecommendationStatus.ACCEPTED] as const;
 

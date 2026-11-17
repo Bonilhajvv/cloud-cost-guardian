@@ -4,12 +4,13 @@ import { Ec2Analysis } from '../../ec2/interfaces/ec2-analysis.interface';
 import { RdsAnalysis } from '../../rds/interfaces/rds-analysis.interface';
 import { CommitmentAnalysis } from '../../commitments/interfaces/commitment-analysis.interface';
 import { NetworkAnalysis } from '../../network/interfaces/network-analysis.interface';
+import { KubernetesAnalysis } from '../../../kubernetes/interfaces/kubernetes-analysis.interface';
 
-export type ResourceAnalysis = Ec2Analysis | EbsAnalysis | RdsAnalysis | CommitmentAnalysis | NetworkAnalysis;
+export type ResourceAnalysis = Ec2Analysis | EbsAnalysis | RdsAnalysis | CommitmentAnalysis | NetworkAnalysis | KubernetesAnalysis;
 
 export interface RecommendationDraft {
   resourceId: string;
-  resourceArn: string;
+  resourceArn: string | null;
   service: string;
   type: RecommendationType;
   source: RecommendationSource;

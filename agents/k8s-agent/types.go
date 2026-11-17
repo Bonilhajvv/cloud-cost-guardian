@@ -31,16 +31,24 @@ type ReportHPA struct {
 	MaxReplicas int  `json:"maxReplicas"`
 }
 
+type ReportContainer struct {
+	Name     string  `json:"name"`
+	Requests Amount  `json:"requests"`
+	Limits   Amount  `json:"limits"`
+	Usage    *Amount `json:"usage,omitempty"`
+}
+
 type ReportWorkload struct {
-	Namespace       string     `json:"namespace"`
-	Kind            string     `json:"kind"`
-	Name            string     `json:"name"`
-	DesiredReplicas *int       `json:"desiredReplicas"`
-	PodCount        int        `json:"podCount"`
-	Requests        Amount     `json:"requests"`
-	Limits          Amount     `json:"limits"`
-	Usage           *Amount    `json:"usage,omitempty"`
-	HPA             *ReportHPA `json:"hpa,omitempty"`
+	Namespace       string            `json:"namespace"`
+	Kind            string            `json:"kind"`
+	Name            string            `json:"name"`
+	DesiredReplicas *int              `json:"desiredReplicas"`
+	PodCount        int               `json:"podCount"`
+	Requests        Amount            `json:"requests"`
+	Limits          Amount            `json:"limits"`
+	Usage           *Amount           `json:"usage,omitempty"`
+	HPA             *ReportHPA        `json:"hpa,omitempty"`
+	Containers      []ReportContainer `json:"containers,omitempty"`
 }
 
 type Report struct {

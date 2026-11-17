@@ -6,6 +6,7 @@ import { ExternalMemoryStats } from './external-memory.interface';
 import { KubernetesNodeInfo } from './kubernetes-node.interface';
 import { InstanceOption, UsageProfile } from './usage-profile.interface';
 import { RecommendationDraft } from '../../core/interfaces/recommendation-draft.interface';
+import { Environment, EnvironmentInfo } from '../../core/interfaces/environment.interface';
 
 export type CostSource = 'COST_EXPLORER_RESOURCE' | 'COMPUTE_OPTIMIZER' | 'ON_DEMAND_PRICE' | 'UNAVAILABLE';
 
@@ -25,6 +26,7 @@ export interface Ec2AnalyzerInput {
   externalMemory?: ExternalMemoryStats | null;
   attachedVolumes?: AttachedVolumeCost[];
   kubernetesNode?: KubernetesNodeRef | null;
+  environmentOverride?: Environment | null;
   now?: Date;
   currency: string;
 }
@@ -47,6 +49,8 @@ export interface Ec2Analysis {
   region: string;
   finding: Ec2Finding;
   kubernetes: KubernetesNodeInfo | null;
+  environment?: EnvironmentInfo;
+  scheduler?: string | null;
   current: {
     instanceType: string;
     vcpu: number | null;

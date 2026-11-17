@@ -129,12 +129,16 @@ func Aggregate(s Snapshot, metricsAvailable bool) ([]ReportNode, []ReportWorkloa
 	}
 
 	podUsage := map[string]Amount{}
+	containerUsage := map[string]map[string]Amount{}
 	for _, pm := range s.PodMetrics {
 		var total Amount
+		byName := map[string]Amount{}
 		for _, c := range pm.Containers {
 			total = add(total, amountOf(c.Usage))
+			byName[c.Name] = amountOf(c.Usage)
 		}
 		podUsage[pm.Metadata.Namespace+"/"+pm.Metadata.Name] = total
+		containerUsage[pm.Metadata.Namespace+"/"+pm.Metadata.Name] = byName
 	}
 
 	nodeUsage := map[string]Amount{}
@@ -200,6 +204,11 @@ func Aggregate(s Snapshot, metricsAvailable bool) ([]ReportNode, []ReportWorkloa
 			}
 			w.Usage = &total
 		}
+		var usage map[string]Amount
+		if metricsAvailable {
+			usage = containerUsage[p.Metadata.Namespace+"/"+p.Metadata.Name]
+		}
+		mergeContainers(w, p.Spec.Containers, usage)
 	}
 
 	out := make([]ReportWorkload, 0, len(workloads))
@@ -213,6 +222,32 @@ func Aggregate(s Snapshot, metricsAvailable bool) ([]ReportNode, []ReportWorkloa
 		return out[i].Kind+out[i].Name < out[j].Kind+out[j].Name
 	})
 	return nodes, out
+}
+
+func mergeContainers(w *ReportWorkload, containers []container, usage map[string]Amount) {
+	for _, c := range containers {
+		idx := -1
+		for i := range w.Containers {
+			if w.Containers[i].Name == c.Name {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			w.Containers = append(w.Containers, ReportContainer{Name: c.Name})
+			idx = len(w.Containers) - 1
+		}
+		rc := &w.Containers[idx]
+		rc.Requests = maxAmount(rc.Requests, amountOf(c.Resources.Requests))
+		rc.Limits = maxAmount(rc.Limits, amountOf(c.Resources.Limits))
+		if u, ok := usage[c.Name]; ok {
+			peak := u
+			if rc.Usage != nil {
+				peak = maxAmount(*rc.Usage, u)
+			}
+			rc.Usage = &peak
+		}
+	}
 }
 
 func internalIP(n kubeNode) string {

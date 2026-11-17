@@ -20,6 +20,8 @@ export const MAX_REPORT_NODES = 5000;
 
 export const MAX_REPORT_WORKLOADS = 20000;
 
+export const MAX_REPORT_CONTAINERS = 50;
+
 export const GIB = 1024 ** 3;
 
 export const INGEST_BATCH_SIZE = 500;

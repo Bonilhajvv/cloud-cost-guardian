@@ -26,6 +26,9 @@ export class KubernetesUsageSample {
   @Column({ type: 'bigint', nullable: true, transformer: numericTransformer })
   memoryBytes: number | null;
 
+  @Column({ type: 'numeric', precision: 10, scale: 3, nullable: true, transformer: numericTransformer })
+  requestsCpu: number | null;
+
   @Column({ type: 'bigint', nullable: true, transformer: numericTransformer })
   requestsMemoryBytes: number | null;
 

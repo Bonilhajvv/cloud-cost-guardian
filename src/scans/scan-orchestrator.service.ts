@@ -36,6 +36,8 @@ import { DEFAULT_CURRENCY, FATAL_STEPS, METRICS_PERIOD_DAYS, scanLockKey } from 
 import { groupByRegion } from './helpers/group-by-region.helper';
 import { instanceDiskUsage } from './helpers/instance-disk-usage.helper';
 import { CommitmentSyncService } from './commitment-sync.service';
+import { Ec2ScheduleScanService } from './ec2-schedule-scan.service';
+import { KubernetesScanService } from './kubernetes-scan.service';
 import { NetworkScanService } from './network-scan.service';
 import { RdsScanService } from './rds-scan.service';
 import {
@@ -72,6 +74,8 @@ export class ScanOrchestratorService {
     private readonly rdsScan: RdsScanService,
     private readonly commitmentSync: CommitmentSyncService,
     private readonly networkScan: NetworkScanService,
+    private readonly kubernetesScan: KubernetesScanService,
+    private readonly scheduleScan: Ec2ScheduleScanService,
   ) {}
 
   async run(account: AwsAccount, steps: readonly ScanStep[], trigger: ScanTrigger, userId?: string): Promise<ScanReport> {
@@ -426,6 +430,7 @@ export class ScanOrchestratorService {
         externalMemory: nodeStats.get(resource.resourceId) ?? null,
         attachedVolumes: attachedVolumes.get(resource.resourceId) ?? [],
         kubernetesNode: nodes.get(resource.resourceId) ?? null,
+        environmentOverride: resource.environment,
         now,
         currency: DEFAULT_CURRENCY,
       });
@@ -440,7 +445,10 @@ export class ScanOrchestratorService {
     this.logger.log({ msg: 'EC2 analysis finished', awsAccountRef: account.id, analyzed, findings, drafts: drafts.length });
     const rdsDetails = await this.rdsScan.analyze(account);
     const networkDetails = await this.networkScan.analyze(account);
-    return { analyzed, findings, ...sync, ebs: volumes.details, rds: rdsDetails, network: networkDetails };
+    const instances = new Map(resources.flatMap((r) => (r.metadata.ec2 ? [[r.resourceId, r.metadata.ec2] as const] : [])));
+    const scheduleDetails = await this.scheduleScan.analyze(account, analyses, instances);
+    const kubernetesDetails = await this.kubernetesScan.analyze(account, analyses);
+    return { analyzed, findings, ...sync, ebs: volumes.details, rds: rdsDetails, network: networkDetails, kubernetes: kubernetesDetails, schedule: scheduleDetails };
   }
 
   private async analyzeVolumes(
