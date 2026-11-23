@@ -75,9 +75,14 @@ export class RdsScanService {
     const drafts: RecommendationDraft[] = [];
     const analyses = new Map<string, ResourceAnalysis>();
     const findings: Record<string, number> = {};
+    const unreadable = new Set<string>();
     let analyzed = 0;
     for (const resource of resources) {
       const m = resource.metadata;
+      if (m.unreadableSince) {
+        unreadable.add(resource.resourceId);
+        continue;
+      }
       if (!m.rds) continue;
       const result = this.analyzer.analyze({
         instance: m.rds,
@@ -96,7 +101,7 @@ export class RdsScanService {
       drafts.push(...result.drafts);
       analyzed++;
     }
-    const sync = await this.recommendations.syncDrafts(account, RDS_RECOMMENDATION_TYPES, drafts, analyses);
+    const sync = await this.recommendations.syncDrafts(account, RDS_RECOMMENDATION_TYPES, drafts, analyses, unreadable);
     this.logger.log({ msg: 'RDS analysis finished', awsAccountRef: account.id, analyzed, findings, drafts: drafts.length });
     return { analyzed, findings, ...sync };
   }
@@ -109,6 +114,7 @@ export class RdsScanService {
       const err = toAwsIntegrationError(error);
       if (err.code !== 'ACCESS_DENIED') throw err;
       this.logger.warn({ msg: 'RDS not readable: update the read-only role with rds:DescribeDBInstances', awsAccountRef: account.id, region });
+      await this.inventory.markUnreadable(account.id, RDS_DB_INSTANCE_RESOURCE_TYPE, seenAt, region);
       return 0;
     }
     if (databases.length === 0) return 0;
@@ -133,6 +139,7 @@ export class RdsScanService {
           : null;
       await this.inventory.patchMetadata(account.id, RDS_DB_INSTANCE_RESOURCE_TYPE, db.dbInstanceId, {
         rds: db,
+        unreadableSince: null,
         tags: db.tags,
         rdsMetrics: metrics.get(db.dbInstanceId) ?? null,
         rdsPrices: { deployment, byClass, singleAz, publicIpv4Monthly, storage, singleAzStorage },

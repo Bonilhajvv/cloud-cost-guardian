@@ -59,3 +59,5 @@ export const MAX_CONNECTIONS_PARAMETER = 'max_connections';
 export const DEFAULT_PARAMETER_GROUP_PREFIX = 'default.';
 
 export const SMALL_CLASS_MEMORY_GB = 2;
+
+export const AUTOMATED_SNAPSHOT_ARN = /:snapshot:(rds|awsbackup):/;

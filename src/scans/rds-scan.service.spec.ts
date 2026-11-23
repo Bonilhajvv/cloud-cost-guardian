@@ -38,6 +38,9 @@ function build() {
       patchMetadata: jest.fn(async (_a: string, _t: string, id: string, patch: AwsResourceMetadata) => {
         store.set(id, { ...(store.get(id) ?? {}), ...patch });
       }),
+      markUnreadable: jest.fn(async () => {
+        for (const [id, m] of store) store.set(id, { ...m, unreadableSince: '2026-11-23T00:00:00.000Z' });
+      }),
       findByType: jest.fn(async () => [...store.entries()].map(([resourceId, metadata]) => ({ resourceId, resourceType: 'rds:db', region: 'us-east-1', metadata }) as AwsResource)),
     },
     rds: {
@@ -122,6 +125,21 @@ describe('RdsScanService', () => {
 
     expect(await service.scan(account, ['us-east-1'], new Date())).toEqual({ databases: 0, failures: [] });
     expect(deps.inventory.upsertDiscovered).not.toHaveBeenCalled();
+  });
+
+  it('does not analyze stale data when RDS stops being readable, and keeps its recommendations untouched', async () => {
+    const { service, deps, store } = build();
+    await service.scan(account, ['us-east-1'], new Date());
+    deps.rds.listInstances.mockRejectedValueOnce(Object.assign(new Error('not authorized'), { name: 'AccessDenied' }));
+    await service.scan(account, ['us-east-1'], new Date());
+
+    expect(await service.analyze(account)).toMatchObject({ analyzed: 0 });
+    const [, , drafts, , unreadable] = deps.recommendations.syncDrafts.mock.calls[0];
+    expect(drafts).toEqual([]);
+    expect([...unreadable]).toEqual(['legacy-hml']);
+
+    await service.scan(account, ['us-east-1'], new Date());
+    expect(store.get('legacy-hml')?.unreadableSince).toBeNull();
   });
 
   it('reads max_connections only from custom parameter groups and survives a denied read', async () => {

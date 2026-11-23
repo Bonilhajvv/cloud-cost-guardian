@@ -36,7 +36,7 @@ export class LambdaScanService {
     const run = await forEachRegion([...regions], async (region) => {
       const functions = await this.runner.readable(account, 'ListFunctions', unavailable, () => this.lambda.listFunctions(account, region));
       if (functions === null) {
-        await this.inventory.keepSeen(account.id, LAMBDA_FUNCTION_RESOURCE_TYPE, seenAt, [region]);
+        await this.inventory.markUnreadable(account.id, LAMBDA_FUNCTION_RESOURCE_TYPE, seenAt, region);
         return 0;
       }
       await this.enrichRegion(account, region, functions, seenAt, unavailable);
@@ -112,6 +112,7 @@ export class LambdaScanService {
       const own = series.get(fn.functionName);
       const invocations = sum(own?.invocations?.values);
       await this.inventory.patchMetadata(account.id, LAMBDA_FUNCTION_RESOURCE_TYPE, fn.arn, {
+        unreadableSince: null,
         lambdaFunction: {
           fn,
           usage: { periodDays: METRICS_PERIOD_DAYS, invocations, durationMs: own?.duration?.values.length ? sum(own.duration.values) : null },

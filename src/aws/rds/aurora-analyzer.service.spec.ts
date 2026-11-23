@@ -83,6 +83,13 @@ describe('RdsBackupAnalyzerService', () => {
     expect(drafts[0].description).toContain('dev (14 days, non-production), prd (35 days)');
   });
 
+  it('says the data is insufficient instead of OPTIMIZED when the causes cannot be read', () => {
+    const { analysis, drafts } = analyzer.analyze({ cost: { ...cost, monthlyCost: 7.14 }, sources: [], oldManualSnapshots: 0, incomplete: true, currency: 'USD' });
+    expect(analysis).toMatchObject({ finding: 'INSUFFICIENT_DATA', current: { monthlyCost: 7.14 } });
+    expect(drafts[0]).toMatchObject({ confidence: Level.LOW, estimatedMonthlySavings: null });
+    expect(drafts[0].description).toContain('rds:DescribeDBSnapshots');
+  });
+
   it('stays quiet without a cause or below the threshold', () => {
     expect(analyzer.analyze({ cost, sources: [{ id: 'a', retentionDays: 7, nonProduction: false }], oldManualSnapshots: 0, currency: 'USD' }).drafts).toEqual([]);
     expect(analyzer.analyze({ cost: { ...cost, monthlyCost: 1 }, sources: [], oldManualSnapshots: 5, currency: 'USD' }).drafts).toEqual([]);

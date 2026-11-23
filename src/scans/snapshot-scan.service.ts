@@ -32,7 +32,7 @@ export class SnapshotScanService {
   async scan(account: AwsAccount, regions: readonly string[], seenAt: Date): Promise<SnapshotScanDetails> {
     const unavailable = new Map<string, Kind>();
     const run = await forEachRegion([...regions], (region) => this.scanRegion(account, region, seenAt, unavailable));
-    for (const kind of new Set(unavailable.values())) await this.keepPrevious(account, kind, seenAt);
+    for (const kind of new Set(unavailable.values())) await this.inventory.markUnreadable(account.id, SNAPSHOT_RESOURCE_TYPES[kind], seenAt);
     return {
       ebsSnapshots: run.results.reduce((s, r) => s + r.value.ebs, 0),
       rdsSnapshots: run.results.reduce((s, r) => s + r.value.rds, 0),
@@ -57,7 +57,9 @@ export class SnapshotScanService {
     const drafts: RecommendationDraft[] = [];
     const analyses = new Map<string, ResourceAnalysis>();
     const findings: Record<string, number> = {};
+    const unreadable = new Set(resources.filter((r) => r.metadata.unreadableSince).map((r) => r.resourceId));
     for (const resource of resources) {
+      if (unreadable.has(resource.resourceId)) continue;
       const snapshot = resource.metadata.snapshot as SnapshotResource;
       const source = sourceOf(snapshot);
       const { analysis, draft } = this.analyzer.analyze({
@@ -74,9 +76,9 @@ export class SnapshotScanService {
       findings[analysis.finding] = (findings[analysis.finding] ?? 0) + 1;
       if (draft) drafts.push(draft);
     }
-    const sync = await this.recommendations.syncDrafts(account, SNAPSHOT_RECOMMENDATION_TYPES, drafts, analyses);
-    this.logger.log({ msg: 'Snapshot analysis finished', awsAccountRef: account.id, analyzed: resources.length, findings, drafts: drafts.length });
-    return { analyzed: resources.length, findings, ...sync };
+    const sync = await this.recommendations.syncDrafts(account, SNAPSHOT_RECOMMENDATION_TYPES, drafts, analyses, unreadable);
+    this.logger.log({ msg: 'Snapshot analysis finished', awsAccountRef: account.id, analyzed: analyses.size, findings, drafts: drafts.length });
+    return { analyzed: analyses.size, findings, ...sync };
   }
 
   private async scanRegion(account: AwsAccount, region: string, seenAt: Date, unavailable: Map<string, Kind>) {
@@ -108,19 +110,10 @@ export class SnapshotScanService {
     const price = ebs?.length ? await this.pricing.getEbsSnapshotPricePerGb(region) : null;
     await this.inventory.upsertDiscovered(account, entries.map((e) => e.data), seenAt);
     for (const e of entries) {
-      await this.inventory.patchMetadata(account.id, e.data.resourceType, e.data.resourceId, { snapshot: e.snapshot, snapshotPricePerGbMonth: price, tags: e.data.tags });
+      await this.inventory.patchMetadata(account.id, e.data.resourceType, e.data.resourceId, { unreadableSince: null, snapshot: e.snapshot, snapshotPricePerGbMonth: price, tags: e.data.tags });
     }
     this.logger.log({ msg: 'Snapshot region enriched', awsAccountRef: account.id, region, ebsSnapshots: ebs?.length ?? 0, rdsSnapshots: rds?.length ?? 0 });
     return { ebs: ebs?.length ?? 0, rds: rds?.length ?? 0 };
-  }
-
-  private async keepPrevious(account: AwsAccount, kind: Kind, seenAt: Date): Promise<void> {
-    const previous = await this.inventory.findByType(account.id, SNAPSHOT_RESOURCE_TYPES[kind]);
-    await this.inventory.upsertDiscovered(
-      account,
-      previous.map((r) => ({ arn: r.arn, resourceId: r.resourceId, service: r.service, resourceType: r.resourceType, region: r.region ?? undefined, name: r.name ?? undefined, tags: r.metadata.tags ?? {} })),
-      seenAt,
-    );
   }
 }
 

@@ -39,14 +39,14 @@ export class S3ScanService {
     try {
       const names = await this.runner.readable(account, 'ListBuckets', unavailable, () => this.s3.listBuckets(account));
       if (names === null) {
-        await this.inventory.keepSeen(account.id, S3_BUCKET_RESOURCE_TYPE, seenAt);
+        await this.inventory.markUnreadable(account.id, S3_BUCKET_RESOURCE_TYPE, seenAt);
         return { resources: 0, unavailable: [...unavailable], failures: [] };
       }
       const { buckets, unreadable } = await this.s3.describeBuckets(account, names, seenAt);
       if (unreadable.length) {
         unavailable.add('DescribeBucket');
         this.logger.warn({ msg: 'S3 buckets not readable: update the read-only role or the bucket policy', awsAccountRef: account.id, buckets: unreadable.length });
-        await this.inventory.keepSeen(account.id, S3_BUCKET_RESOURCE_TYPE, seenAt);
+        await this.inventory.markUnreadable(account.id, S3_BUCKET_RESOURCE_TYPE, seenAt);
       }
       const byRegion = groupByRegion(buckets, (b) => b.region);
       const run = await forEachRegion([...byRegion.keys()], (region) => this.enrichRegion(account, region, byRegion.get(region) ?? [], seenAt));
@@ -95,7 +95,7 @@ export class S3ScanService {
       const own = series.get(bucket.name) ?? {};
       const last = (kind: string): number | null => own[kind]?.values.at(-1) ?? null;
       const storageGb = Object.fromEntries(kinds.flatMap((k) => (last(k) === null ? [] : [[k, (last(k) as number) / GIB_BYTES] as const])));
-      await this.inventory.patchMetadata(account.id, S3_BUCKET_RESOURCE_TYPE, bucket.name, { s3Bucket: { bucket, storageGb, objects: last('objects'), prices } });
+      await this.inventory.patchMetadata(account.id, S3_BUCKET_RESOURCE_TYPE, bucket.name, { unreadableSince: null, s3Bucket: { bucket, storageGb, objects: last('objects'), prices } });
     }
     this.logger.log({ msg: 'S3 region enriched', awsAccountRef: account.id, region, buckets: buckets.length });
     return buckets.length;

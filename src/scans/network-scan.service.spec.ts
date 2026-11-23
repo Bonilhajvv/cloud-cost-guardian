@@ -25,6 +25,9 @@ function build() {
         const row = store.get(id);
         if (row) row.metadata = { ...row.metadata, ...patch };
       }),
+      markUnreadable: jest.fn(async (_a: string, type: string, seenAt: Date) => {
+        for (const r of store.values()) if (r.type === type) r.metadata = { ...r.metadata, unreadableSince: seenAt.toISOString() };
+      }),
       findByType: jest.fn(async (_a: string, type: string) =>
         [...store.entries()].filter(([, r]) => r.type === type).map(([resourceId, r]) => ({ resourceId, resourceType: r.type, arn: r.arn, metadata: r.metadata }) as AwsResource),
       ),
@@ -89,5 +92,24 @@ describe('NetworkScanService', () => {
     expect(details.failures).toEqual([]);
     expect(details.unavailable.sort()).toEqual(['DescribeLoadBalancers', 'DescribeNetworkInterfaces']);
     expect(deps.accounts.saveNetwork).not.toHaveBeenCalled();
+  });
+
+  it('freezes what it can no longer read instead of closing it, and thaws it when the permission returns', async () => {
+    const { service, deps, store } = build();
+    await service.scan(account, ['us-east-1'], new Date('2026-11-16T00:00:00Z'));
+    const denied = Object.assign(new Error('no'), { name: 'AccessDenied' });
+    deps.network.listLoadBalancers.mockRejectedValueOnce(denied);
+    deps.network.gatewayEndpointsByVpc.mockRejectedValueOnce(denied);
+    const seenAt = new Date('2026-11-17T00:00:00Z');
+    await service.scan(account, ['us-east-1'], seenAt);
+    expect(deps.inventory.markUnreadable).toHaveBeenCalledWith('acc-1', 'elasticloadbalancing:loadbalancer', seenAt, 'us-east-1');
+
+    await service.analyze(account);
+    const [, , drafts, , unreadable] = deps.recommendations.syncDrafts.mock.calls[0];
+    expect(drafts.map((d: { type: RecommendationType }) => d.type)).toEqual([RecommendationType.EIP_UNUSED]);
+    expect([...unreadable].sort()).toEqual(['abc', 'vpc-1']);
+
+    await service.scan(account, ['us-east-1'], new Date('2026-11-18T00:00:00Z'));
+    expect(store.get('abc')?.metadata.unreadableSince).toBeNull();
   });
 });

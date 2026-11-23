@@ -19,6 +19,7 @@ export interface RdsBackupAnalyzerInput {
   cost: RdsBackupCost;
   sources: RdsBackupSource[];
   oldManualSnapshots: number;
+  incomplete?: boolean;
   currency: string;
   now?: Date;
 }

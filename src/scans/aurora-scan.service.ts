@@ -36,9 +36,10 @@ export class AuroraScanService {
     const unavailable = new Set<string>();
     const instances = new Map((await this.inventory.findByType(account.id, RDS_DB_INSTANCE_RESOURCE_TYPE)).map((r) => [`${r.region}|${r.resourceId}`, r]));
     const run = await forEachRegion([...regions], async (region) => {
-      const clusters = await this.runner.readable(account, 'DescribeDBClusters', unavailable, () => this.rds.listAuroraClusters(account, region));
+      const instancesUnreadable = [...instances.values()].some((r) => r.region === region && r.metadata.unreadableSince);
+      const clusters = instancesUnreadable ? null : await this.runner.readable(account, 'DescribeDBClusters', unavailable, () => this.rds.listAuroraClusters(account, region));
       if (clusters === null) {
-        await this.inventory.keepSeen(account.id, AURORA_CLUSTER_RESOURCE_TYPE, seenAt, [region]);
+        await this.inventory.markUnreadable(account.id, AURORA_CLUSTER_RESOURCE_TYPE, seenAt, region);
         return 0;
       }
       await this.enrichRegion(account, region, clusters, instances, seenAt);
@@ -80,6 +81,7 @@ export class AuroraScanService {
       const ioMonthly = io.every((v) => v === null) ? null : io.reduce((sum, v) => sum + (v ? (v.total / v.days) * DAYS_PER_MONTH : 0), 0);
       await this.inventory.patchMetadata(account.id, AURORA_CLUSTER_RESOURCE_TYPE, cluster.arn, {
         tags: cluster.tags,
+        unreadableSince: null,
         auroraCluster: {
           cluster,
           members,

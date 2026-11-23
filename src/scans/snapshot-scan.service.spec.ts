@@ -40,6 +40,9 @@ function build() {
         const row = store.get(id);
         if (row) row.metadata = { ...row.metadata, ...patch };
       }),
+      markUnreadable: jest.fn(async (_a: string, type: string, seenAt: Date) => {
+        for (const r of store.values()) if (r.type === type) Object.assign(r, { seenAt, metadata: { ...r.metadata, unreadableSince: seenAt.toISOString() } });
+      }),
       findByType: jest.fn(async (_a: string, type: string) =>
         [...store.entries()].filter(([, r]) => r.type === type).map(([resourceId, r]) => ({ resourceId, resourceType: r.type, arn: r.arn, region: 'us-east-1', name: null, service: 'ec2', metadata: r.metadata }) as unknown as AwsResource),
       ),
@@ -90,6 +93,11 @@ describe('SnapshotScanService', () => {
     expect(details).toMatchObject({ ebsSnapshots: 0, unavailable: ['DescribeSnapshots'], failures: [] });
     expect(store.get('snap-only')?.seenAt).toEqual(seenAt);
     expect(store.get('snap-only')?.metadata.snapshot).toBeDefined();
+
+    expect(await service.analyze(account)).toMatchObject({ analyzed: 0 });
+    const [, , drafts, , unreadable] = deps.recommendations.syncDrafts.mock.calls[0];
+    expect(drafts).toEqual([]);
+    expect([...unreadable].sort()).toEqual(['snap-a', 'snap-b', 'snap-only']);
   });
 
   it('does not list EBS snapshots when AMIs cannot be read, to never suggest deleting an AMI snapshot', async () => {

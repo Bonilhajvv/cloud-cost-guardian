@@ -58,5 +58,6 @@ export interface AwsResourceMetadata {
   auroraCluster?: AuroraClusterMetadata;
   s3Bucket?: S3BucketMetadata;
   lambdaFunction?: LambdaFunctionMetadata;
+  unreadableSince?: string | null;
   analysis?: ResourceAnalysis;
 }

@@ -1,5 +1,6 @@
 import { Resource } from '@aws-sdk/client-resource-explorer-2';
 import { parseArn } from '../../core/helpers/arn.helper';
+import { LOAD_BALANCER_RESOURCE_TYPE } from '../constants/resource-explorer.constant';
 import { AwsResourceData } from '../interfaces/aws-resource-data.interface';
 
 export function normalizeResource(resource: Resource): AwsResourceData | null {
@@ -12,11 +13,15 @@ export function normalizeResource(resource: Resource): AwsResourceData | null {
     arn: resource.Arn,
     resourceId: arn.resourceId,
     service: resource.Service ?? arn.service,
-    resourceType: resource.ResourceType ?? `${arn.service}:unknown`,
+    resourceType: canonicalResourceType(resource.ResourceType) ?? `${arn.service}:unknown`,
     region,
     name: tags.Name,
     tags,
   };
+}
+
+export function canonicalResourceType(resourceType: string | undefined): string | undefined {
+  return resourceType?.startsWith(`${LOAD_BALANCER_RESOURCE_TYPE}/`) ? LOAD_BALANCER_RESOURCE_TYPE : resourceType;
 }
 
 export function extractTags(resource: Resource): Record<string, string> {

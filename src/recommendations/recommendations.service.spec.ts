@@ -67,6 +67,19 @@ describe('RecommendationsService.syncDrafts', () => {
     expect(old.status).toBe(RecommendationStatus.OPEN);
   });
 
+  it('never closes or implements a recommendation of a resource it could not read', async () => {
+    const old = () => ({ resourceId: 'lb-1', type: RecommendationType.LOAD_BALANCER_IDLE, status: RecommendationStatus.OPEN, currentMonthlyCost: 16, metadata: {} });
+    const types = [RecommendationType.LOAD_BALANCER_IDLE];
+
+    const frozen = build([old()]);
+    expect(await frozen.service.syncDrafts(account, types, [], new Map(), new Set(['lb-1']))).toMatchObject({ resolved: 0 });
+    expect(frozen.saved).toEqual([]);
+
+    const removed = build([old()]);
+    await removed.service.syncDrafts(account, types, [], new Map());
+    expect(removed.saved[0].status).toBe(RecommendationStatus.IMPLEMENTED);
+  });
+
   it('records the resolution reason for recommendations missing from the scan', async () => {
     const old = {
       resourceId: 'i-1',

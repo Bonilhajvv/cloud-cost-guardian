@@ -4,7 +4,7 @@ import { toAwsIntegrationError } from '../aws/core/errors/aws-integration.error'
 import { Environment } from '../aws/core/interfaces/environment.interface';
 import { ResourceAnalysis } from '../aws/core/interfaces/recommendation-draft.interface';
 import { CostExplorerService } from '../aws/costs/cost-explorer.service';
-import { RDS_BACKUP_REFRESH_MS, RDS_BACKUP_WINDOW_DAYS } from '../aws/rds/constants/rds.constant';
+import { AUTOMATED_SNAPSHOT_ARN, RDS_BACKUP_REFRESH_MS, RDS_BACKUP_WINDOW_DAYS } from '../aws/rds/constants/rds.constant';
 import { isAuroraEngine } from '../aws/rds/helpers/aurora.helper';
 import { RdsBackupSource } from '../aws/rds/interfaces/rds-backup.interface';
 import { RdsBackupAnalyzerService } from '../aws/rds/rds-backup-analyzer.service';
@@ -61,19 +61,24 @@ export class RdsBackupScanService {
     });
     const sources = [
       ...databases.flatMap((r) => {
-        const db = r.metadata.rds;
+        const db = r.metadata.unreadableSince ? undefined : r.metadata.rds;
         return db && !isAuroraEngine(db.engine) && !db.clusterId ? [source(db.dbInstanceId, r.region, db.backupRetentionDays ?? null, db.tags, r.environment)] : [];
       }),
       ...clusters.flatMap((r) => {
-        const c = r.metadata.auroraCluster?.cluster;
+        const c = r.metadata.unreadableSince ? undefined : r.metadata.auroraCluster?.cluster;
         return c ? [source(c.clusterId, r.region, c.backupRetentionDays, c.tags, r.environment)] : [];
       }),
     ];
+    const incompleteIn = (region: string): boolean =>
+      databases.some((r) => r.region === region && (!r.metadata.rds || r.metadata.unreadableSince || (!isAuroraEngine(r.metadata.rds.engine) && !r.metadata.rds.clusterId && r.metadata.rds.backupRetentionDays === undefined))) ||
+      clusters.some((r) => r.region === region && (r.metadata.unreadableSince || !r.metadata.auroraCluster)) ||
+      snapshots.some((r) => r.region === region && (r.metadata.unreadableSince || (!r.metadata.snapshot && !AUTOMATED_SNAPSHOT_ARN.test(r.arn))));
     const results = snapshot.regions.map((cost) =>
       this.analyzer.analyze({
         cost,
         sources: sources.filter((s) => s.region === cost.region).map((s) => s.source),
-        oldManualSnapshots: snapshots.filter((r) => r.region === cost.region && r.metadata.analysis?.recommendation?.type === RecommendationType.RDS_SNAPSHOT_OLD).length,
+        oldManualSnapshots: snapshots.filter((r) => r.region === cost.region && !r.metadata.unreadableSince && r.metadata.analysis?.recommendation?.type === RecommendationType.RDS_SNAPSHOT_OLD).length,
+        incomplete: incompleteIn(cost.region),
         currency: DEFAULT_CURRENCY,
         now,
       }),

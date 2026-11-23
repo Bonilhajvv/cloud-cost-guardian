@@ -28,8 +28,13 @@ export class ServiceAnalysisRunner {
     const drafts: RecommendationDraft[] = [];
     const analyses = new Map<string, ResourceAnalysis>();
     const findings: Record<string, number> = {};
+    const unreadable = new Set<string>();
     let analyzed = 0;
     for (const resource of await this.inventory.findByType(account.id, resourceType)) {
+      if (resource.metadata.unreadableSince) {
+        for (const id of [resource.resourceId, resource.metadata.analysis?.resourceId ?? resource.arn, ...relatedIds(resource)]) unreadable.add(id);
+        continue;
+      }
       const result = run(resource);
       if (!result) continue;
       await this.inventory.patchMetadata(account.id, resourceType, resource.resourceId, { analysis: result.analysis });
@@ -38,7 +43,7 @@ export class ServiceAnalysisRunner {
       drafts.push(...result.drafts);
       analyzed++;
     }
-    const sync = await this.recommendations.syncDrafts(account, types, drafts, analyses);
+    const sync = await this.recommendations.syncDrafts(account, types, drafts, analyses, unreadable);
     this.logger.log({ msg: 'Service analysis finished', awsAccountRef: account.id, resourceType, analyzed, findings, drafts: drafts.length });
     return { analyzed, findings, ...sync };
   }

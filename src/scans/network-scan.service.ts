@@ -57,10 +57,15 @@ export class NetworkScanService {
     const drafts: RecommendationDraft[] = [];
     const analyses = new Map<string, ResourceAnalysis>();
     const findings: Record<string, number> = {};
+    const unreadable = new Set<string>();
     let analyzed = 0;
     for (const type of Object.values(NETWORK_RESOURCE_TYPES)) {
       for (const resource of await this.inventory.findByType(account.id, type)) {
         const m = resource.metadata;
+        if (m.unreadableSince) {
+          unreadable.add(resource.resourceId);
+          continue;
+        }
         if (!m.network) continue;
         const { analysis, draft } = this.analyzer.analyze({
           resourceId: resource.resourceId,
@@ -76,13 +81,14 @@ export class NetworkScanService {
         analyzed++;
       }
     }
-    const sync = await this.recommendations.syncDrafts(account, NETWORK_RECOMMENDATION_TYPES, drafts, analyses);
+    const sync = await this.recommendations.syncDrafts(account, NETWORK_RECOMMENDATION_TYPES, drafts, analyses, unreadable);
     this.logger.log({ msg: 'Network analysis finished', awsAccountRef: account.id, analyzed, findings, drafts: drafts.length });
     return { analyzed, findings, ...sync };
   }
 
   private async enrichRegion(account: AwsAccount, region: string, seenAt: Date, unavailable: Set<string>) {
-    const read = async <T>(operation: string, call: () => Promise<T>, fallback: T): Promise<T> => {
+    const denied = new Set<string>();
+    const read = async <T>(operation: string, types: readonly string[], call: () => Promise<T>, fallback: T): Promise<T> => {
       try {
         return await call();
       } catch (error) {
@@ -90,14 +96,16 @@ export class NetworkScanService {
         if (err.code !== 'ACCESS_DENIED') throw err;
         if (!unavailable.has(operation)) this.logger.warn({ msg: 'Network data not readable: update the read-only role', awsAccountRef: account.id, operation });
         unavailable.add(operation);
+        for (const type of types) denied.add(type);
         return fallback;
       }
     };
-    const eips = await read('DescribeAddresses', () => this.network.listElasticIps(account, region), []);
-    const nats = await read('DescribeNatGateways', () => this.network.listNatGateways(account, region), []);
-    const lbs = await read('DescribeLoadBalancers', () => this.network.listLoadBalancers(account, region), []);
-    const endpoints = await read('DescribeVpcEndpoints', () => this.network.gatewayEndpointsByVpc(account, region), new Map<string, string[]>());
-    const enis = await read('DescribeNetworkInterfaces', () => this.network.publicNetworkInterfaces(account, region), []);
+    const eips = await read('DescribeAddresses', [NETWORK_RESOURCE_TYPES.EIP], () => this.network.listElasticIps(account, region), []);
+    const nats = await read('DescribeNatGateways', [NETWORK_RESOURCE_TYPES.NAT, NETWORK_RESOURCE_TYPES.VPC], () => this.network.listNatGateways(account, region), []);
+    const lbs = await read('DescribeLoadBalancers', [NETWORK_RESOURCE_TYPES.LB], () => this.network.listLoadBalancers(account, region), []);
+    const endpoints = await read('DescribeVpcEndpoints', [NETWORK_RESOURCE_TYPES.VPC], () => this.network.gatewayEndpointsByVpc(account, region), new Map<string, string[]>());
+    const enis = await read('DescribeNetworkInterfaces', [], () => this.network.publicNetworkInterfaces(account, region), []);
+    for (const type of denied) await this.inventory.markUnreadable(account.id, type, seenAt, region);
     const publicIpv4: PublicIpv4[] = publicIpv4Of(enis, eips.filter((e) => !e.associationId), region);
     const empty = { elasticIps: 0, natGateways: 0, loadBalancers: 0, publicIpv4, publicIpv4Hourly: null as number | null };
     if (eips.length === 0 && nats.length === 0 && lbs.length === 0 && publicIpv4.length === 0) return empty;
@@ -129,14 +137,14 @@ export class NetworkScanService {
         data: { arn: lb.arn, resourceId: lb.id, service: 'elasticloadbalancing', resourceType: NETWORK_RESOURCE_TYPES.LB, region, name: lb.name, tags: {} },
         network: { kind: 'LB' as const, lb, usage: usage.get(lb.id) ?? null, publicIpv4: ipv4ByLb.get(lb.metricDimension) ?? 0 },
       })),
-      ...this.vpcsWithNat(nats, endpoints, usage).map((vpc) => ({
+      ...(denied.has(NETWORK_RESOURCE_TYPES.VPC) ? [] : this.vpcsWithNat(nats, endpoints, usage)).map((vpc) => ({
         data: { arn: `arn:aws:ec2:${region}:${account.awsAccountId}:vpc/${vpc.vpcId}`, resourceId: vpc.vpcId, service: 'ec2', resourceType: NETWORK_RESOURCE_TYPES.VPC, region, tags: {} },
         network: { kind: 'VPC' as const, region, ...vpc },
       })),
     ];
     await this.inventory.upsertDiscovered(account, entries.map((e) => e.data), seenAt);
     for (const e of entries) {
-      await this.inventory.patchMetadata(account.id, e.data.resourceType, e.data.resourceId, { network: e.network, networkPrices: prices, tags: e.data.tags });
+      await this.inventory.patchMetadata(account.id, e.data.resourceType, e.data.resourceId, { unreadableSince: null, network: e.network, networkPrices: prices, tags: e.data.tags });
     }
     this.logger.log({ msg: 'Network region enriched', awsAccountRef: account.id, region, elasticIps: eips.length, natGateways: nats.length, loadBalancers: lbs.length, publicIpv4: publicIpv4.length });
     return { elasticIps: eips.length, natGateways: nats.length, loadBalancers: lbs.length, publicIpv4, publicIpv4Hourly: prices.publicIpv4Hourly };

@@ -25,7 +25,9 @@ export class RdsBackupAnalyzerService {
       notes: ['Cost of the backup storage beyond the free allowance, from Cost Explorer'],
     };
     const opportunities: ServiceOpportunity[] = [];
-    if (cost.monthlyCost >= RDS_BACKUP_MIN_MONTHLY_COST && (longRetention.length > 0 || input.oldManualSnapshots > 0)) {
+    const causes = longRetention.length > 0 || input.oldManualSnapshots > 0;
+    const unexplained = !causes && !!input.incomplete;
+    if (cost.monthlyCost >= RDS_BACKUP_MIN_MONTHLY_COST && (causes || unexplained)) {
       const list = longRetention
         .sort((a, b) => Number(b.nonProduction) - Number(a.nonProduction) || (b.retentionDays ?? 0) - (a.retentionDays ?? 0))
         .slice(0, 10)
@@ -38,14 +40,17 @@ export class RdsBackupAnalyzerService {
           `RDS charged ${currency} ${round(cost.monthlyCost)} in the last 30 days for ${round(cost.gbMonth)} GB-month of backups beyond the free allowance`,
           ...(list.length ? [`Automated backup retention above ${RDS_LONG_RETENTION_DAYS} days: ${list.join(', ')}`] : []),
           ...(input.oldManualSnapshots ? [`${input.oldManualSnapshots} manual snapshots are 90 days old or more (see RDS_SNAPSHOT_OLD)`] : []),
+          ...(input.incomplete ? ['The role could not read every retention period and manual snapshot of the region: update it with rds:DescribeDBInstances, rds:DescribeDBClusters and rds:DescribeDBSnapshots to see all the causes'] : []),
           'Confirm retention and compliance policies first: a shorter retention deletes older recovery points for good',
           `AWS does not report the size of each backup, so the saving is unknown, at most ${currency} ${round(cost.monthlyCost)}/month`,
         ],
         monthlySavings: null,
         risk: Level.MEDIUM,
-        confidence: Level.MEDIUM,
+        confidence: unexplained ? Level.LOW : Level.MEDIUM,
       });
     }
-    return buildServiceAnalysis(base, 'rds', opportunities, currency, input.now ?? new Date());
+    const result = buildServiceAnalysis(base, 'rds', opportunities, currency, input.now ?? new Date());
+    if (unexplained) result.analysis.finding = 'INSUFFICIENT_DATA';
+    return result;
   }
 }

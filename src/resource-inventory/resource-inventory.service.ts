@@ -71,8 +71,15 @@ export class ResourceInventoryService {
     return removed;
   }
 
-  async keepSeen(awsAccountId: string, resourceType: string, seenAt: Date, regions?: readonly string[]): Promise<void> {
-    await this.repo.update({ awsAccountId, resourceType, ...(regions ? { region: In([...regions]) } : {}) }, { lastSeenAt: seenAt });
+  async markUnreadable(awsAccountId: string, resourceType: string, seenAt: Date, region?: string): Promise<void> {
+    const qb = this.repo
+      .createQueryBuilder()
+      .update(AwsResource)
+      .set({ lastSeenAt: seenAt, metadata: () => `"metadata" || jsonb_build_object('unreadableSince', COALESCE("metadata"->>'unreadableSince', CAST(:since AS text)))` })
+      .where('"awsAccountId" = :awsAccountId AND "resourceType" = :resourceType', { awsAccountId, resourceType })
+      .setParameter('since', seenAt.toISOString());
+    if (region) qb.andWhere('"region" = :region', { region });
+    await qb.execute();
   }
 
   async patchMetadata(awsAccountId: string, resourceType: string, resourceId: string, patch: AwsResourceMetadata): Promise<void> {

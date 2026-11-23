@@ -41,6 +41,7 @@ export class RecommendationsService {
     types: readonly RecommendationType[],
     drafts: RecommendationDraft[],
     currentAnalyses: ReadonlyMap<string, ResourceAnalysis> | null,
+    unreadableIds: ReadonlySet<string> = new Set(),
   ): Promise<DraftSyncResult> {
     const result: DraftSyncResult = { created: 0, updated: 0, resolved: 0, skipped: 0 };
     const existing = await this.repo.find({
@@ -84,7 +85,7 @@ export class RecommendationsService {
     }
 
     if (currentAnalyses) {
-      const stale = existing.filter((r) => !touched.has(key(r.resourceId, r.type)) && this.isTracked(r));
+      const stale = existing.filter((r) => !touched.has(key(r.resourceId, r.type)) && this.isTracked(r) && !unreadableIds.has(r.resourceId));
       const closed = stale.filter((r) => this.resolve(r, currentAnalyses.get(r.resourceId), currentAnalyses));
       if (stale.length) await this.repo.save(stale);
       result.resolved += closed.length;
