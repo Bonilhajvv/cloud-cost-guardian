@@ -1,9 +1,11 @@
-import { RDSClient, paginateDescribeDBInstances, paginateDescribeDBMajorEngineVersions } from '@aws-sdk/client-rds';
+import { RDSClient, paginateDescribeDBClusters, paginateDescribeDBInstances, paginateDescribeDBMajorEngineVersions, paginateDescribeDBParameters } from '@aws-sdk/client-rds';
 import { Injectable } from '@nestjs/common';
 import { AwsClientFactory } from '../core/aws-client.factory';
 import { toAwsIntegrationError } from '../core/errors/aws-integration.error';
 import { AwsAccountRef } from '../core/interfaces/aws-account-ref.interface';
-import { EXTENDED_SUPPORT, STANDARD_SUPPORT } from './constants/rds.constant';
+import { EXTENDED_SUPPORT, MAX_CONNECTIONS_PARAMETER, STANDARD_SUPPORT } from './constants/rds.constant';
+import { normalizeAuroraCluster } from './helpers/aurora.helper';
+import { AuroraCluster } from './interfaces/aurora.interface';
 import { normalizeRdsInstance } from './helpers/normalize-rds-instance.helper';
 import { RdsEngineLifecycle, RdsInstance } from './interfaces/rds-instance.interface';
 
@@ -23,6 +25,35 @@ export class RdsService {
       }
     } catch (error) {
       throw toAwsIntegrationError(error, `DescribeDBInstances ${region}`);
+    }
+    return out;
+  }
+
+  async customMaxConnections(account: AwsAccountRef, region: string, parameterGroup: string): Promise<string | null> {
+    const client = await this.clients.createClient(RDSClient, account, region);
+    try {
+      for await (const page of paginateDescribeDBParameters({ client }, { DBParameterGroupName: parameterGroup, Source: 'user' })) {
+        const parameter = (page.Parameters ?? []).find((p) => p.ParameterName === MAX_CONNECTIONS_PARAMETER);
+        if (parameter?.ParameterValue) return parameter.ParameterValue;
+      }
+    } catch (error) {
+      throw toAwsIntegrationError(error, `DescribeDBParameters ${region}`);
+    }
+    return null;
+  }
+
+  async listAuroraClusters(account: AwsAccountRef, region: string): Promise<AuroraCluster[]> {
+    const client = await this.clients.createClient(RDSClient, account, region);
+    const out: AuroraCluster[] = [];
+    try {
+      for await (const page of paginateDescribeDBClusters({ client }, { MaxRecords: 100 })) {
+        for (const c of page.DBClusters ?? []) {
+          const normalized = normalizeAuroraCluster(c, region);
+          if (normalized) out.push(normalized);
+        }
+      }
+    } catch (error) {
+      throw toAwsIntegrationError(error, `DescribeDBClusters ${region}`);
     }
     return out;
   }

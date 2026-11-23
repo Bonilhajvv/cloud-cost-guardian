@@ -6,4 +6,8 @@ export interface RdsUtilizationMetrics {
   cpu: MetricSummary;
   connectionsMax: number | null;
   connectionsDatapoints: number;
+  freeStorageMinGb?: number | null;
+  freeStorageDatapoints?: number;
+  peakIops?: number | null;
+  peakThroughputMBps?: number | null;
 }

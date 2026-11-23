@@ -31,6 +31,8 @@ import {
   SavingsPlansCoverage,
   SavingsPlansUtilization,
 } from './interfaces/commitment.interface';
+import { RDS_BACKUP_USAGE_TYPE } from '../rds/constants/rds.constant';
+import { RdsBackupCost } from '../rds/interfaces/rds-backup.interface';
 import { flatten } from './helpers/flatten-cost-results.helper';
 
 @Injectable()
@@ -96,6 +98,41 @@ export class CostExplorerService {
       throw toAwsIntegrationError(error, 'GetCostAndUsageWithResources');
     }
     return lines;
+  }
+
+  async getRdsBackupCosts(account: AwsAccountRef, start: string, end: string): Promise<RdsBackupCost[]> {
+    const client = await this.clients.createClient(CostExplorerClient, account, CE_REGION);
+    const byRegion = new Map<string, RdsBackupCost>();
+    try {
+      let NextPageToken: string | undefined;
+      do {
+        const page = await client.send(
+          new GetCostAndUsageCommand({
+            TimePeriod: { Start: start, End: end },
+            Granularity: Granularity.MONTHLY,
+            Metrics: [METRIC, 'UsageQuantity'],
+            Filter: { Dimensions: { Key: 'SERVICE', Values: [RDS_SERVICE_NAME] } },
+            GroupBy: [
+              { Type: 'DIMENSION', Key: 'REGION' },
+              { Type: 'DIMENSION', Key: 'USAGE_TYPE' },
+            ],
+            NextPageToken,
+          }),
+        );
+        for (const group of (page.ResultsByTime ?? []).flatMap((r) => r.Groups ?? [])) {
+          const [region, usageType] = group.Keys ?? [];
+          if (!region || !usageType || !RDS_BACKUP_USAGE_TYPE.test(usageType)) continue;
+          const current = byRegion.get(region) ?? { region, monthlyCost: 0, gbMonth: 0 };
+          current.monthlyCost += Number(group.Metrics?.[METRIC]?.Amount ?? 0);
+          current.gbMonth += Number(group.Metrics?.UsageQuantity?.Amount ?? 0);
+          byRegion.set(region, current);
+        }
+        NextPageToken = page.NextPageToken;
+      } while (NextPageToken);
+    } catch (error) {
+      throw toAwsIntegrationError(error, 'GetCostAndUsage RDS backups');
+    }
+    return [...byRegion.values()].filter((r) => r.monthlyCost > 0);
   }
 
   async getForecast(account: AwsAccountRef, start: string, end: string): Promise<CostForecast | null> {

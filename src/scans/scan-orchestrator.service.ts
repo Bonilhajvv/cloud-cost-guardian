@@ -39,7 +39,13 @@ import { CommitmentSyncService } from './commitment-sync.service';
 import { Ec2ScheduleScanService } from './ec2-schedule-scan.service';
 import { KubernetesScanService } from './kubernetes-scan.service';
 import { NetworkScanService } from './network-scan.service';
+import { AuroraScanService } from './aurora-scan.service';
+import { LambdaScanService } from './lambda-scan.service';
+import { RdsBackupScanService } from './rds-backup-scan.service';
+import { RealizedSavingsService } from './realized-savings.service';
+import { S3ScanService } from './s3-scan.service';
 import { RdsScanService } from './rds-scan.service';
+import { SnapshotScanService } from './snapshot-scan.service';
 import {
   AnalysisDetails,
   OptimizerSyncDetails,
@@ -76,6 +82,12 @@ export class ScanOrchestratorService {
     private readonly networkScan: NetworkScanService,
     private readonly kubernetesScan: KubernetesScanService,
     private readonly scheduleScan: Ec2ScheduleScanService,
+    private readonly snapshotScan: SnapshotScanService,
+    private readonly auroraScan: AuroraScanService,
+    private readonly s3Scan: S3ScanService,
+    private readonly lambdaScan: LambdaScanService,
+    private readonly rdsBackupScan: RdsBackupScanService,
+    private readonly realizedSavings: RealizedSavingsService,
   ) {}
 
   async run(account: AwsAccount, steps: readonly ScanStep[], trigger: ScanTrigger, userId?: string): Promise<ScanReport> {
@@ -222,6 +234,8 @@ export class ScanOrchestratorService {
     const ebsVolumes = ebsRun.results.reduce((s, r) => s + r.value, 0);
     const rds = await this.rdsScan.scan(account, rdsRegions, seenAt);
     failures.push(...rds.failures);
+    const aurora = await this.auroraScan.scan(account, rdsRegions, seenAt);
+    failures.push(...aurora.failures);
 
     const regions = [
       ...new Set([
@@ -231,6 +245,12 @@ export class ScanOrchestratorService {
     ].sort();
     const network = await this.networkScan.scan(account, discovery.mode === 'UNAVAILABLE' ? rdsRegions : regions, seenAt);
     failures.push(...network.failures);
+    const snapshots = await this.snapshotScan.scan(account, discovery.mode === 'UNAVAILABLE' ? rdsRegions : regions, seenAt);
+    failures.push(...snapshots.failures);
+    const s3 = await this.s3Scan.scan(account, seenAt);
+    failures.push(...s3.failures);
+    const lambda = await this.lambdaScan.scan(account, discovery.mode === 'UNAVAILABLE' ? rdsRegions : regions, seenAt);
+    failures.push(...lambda.failures);
     const staleRemoved = failures.length === 0 ? await this.inventory.removeStale(account.id, seenAt) : 0;
     await this.accounts.markSynced(account.id, 'lastScanAt', { regions });
     account.regions = regions;
@@ -243,6 +263,10 @@ export class ScanOrchestratorService {
       ebsVolumes,
       rdsDatabases: rds.databases,
       network,
+      snapshots,
+      aurora,
+      s3,
+      lambda,
       regions,
       failures,
       staleRemoved,
@@ -358,7 +382,9 @@ export class ScanOrchestratorService {
     const summary = await this.costSync.syncAccount(account);
     await this.accounts.markSynced(account.id, 'lastCostSyncAt');
     const commitments = await this.commitmentSync.sync(account);
-    return { ...summary, commitments };
+    const rdsBackup = await this.rdsBackupScan.sync(account);
+    const realizedSavings = await this.realizedSavings.sync(account);
+    return { ...summary, commitments, rdsBackup, realizedSavings };
   }
 
   async syncOptimizer(account: AwsAccount): Promise<OptimizerSyncDetails> {
@@ -388,7 +414,8 @@ export class ScanOrchestratorService {
     if (notEnrolled) this.logger.warn({ msg: 'Compute Optimizer not enrolled', awsAccountRef: account.id, regions: regionStatus });
     await this.accounts.markSynced(account.id, 'lastOptimizerSyncAt');
     const rds = await this.rdsScan.syncOptimizer(account);
-    return { regions: regionStatus, recommendations: total, failures: run.failures, rds };
+    const lambda = await this.lambdaScan.syncOptimizer(account);
+    return { regions: regionStatus, recommendations: total, failures: run.failures, rds, lambda };
   }
 
   async analyze(account: AwsAccount): Promise<AnalysisDetails> {
@@ -444,11 +471,16 @@ export class ScanOrchestratorService {
     const sync = await this.recommendations.syncDrafts(account, EC2_RECOMMENDATION_TYPES, drafts, new Map([...volumes.analyses, ...analyses]));
     this.logger.log({ msg: 'EC2 analysis finished', awsAccountRef: account.id, analyzed, findings, drafts: drafts.length });
     const rdsDetails = await this.rdsScan.analyze(account);
+    const auroraDetails = await this.auroraScan.analyze(account);
     const networkDetails = await this.networkScan.analyze(account);
+    const snapshotDetails = await this.snapshotScan.analyze(account);
+    const rdsBackupDetails = await this.rdsBackupScan.analyze(account);
+    const s3Details = await this.s3Scan.analyze(account);
+    const lambdaDetails = await this.lambdaScan.analyze(account);
     const instances = new Map(resources.flatMap((r) => (r.metadata.ec2 ? [[r.resourceId, r.metadata.ec2] as const] : [])));
     const scheduleDetails = await this.scheduleScan.analyze(account, analyses, instances);
     const kubernetesDetails = await this.kubernetesScan.analyze(account, analyses);
-    return { analyzed, findings, ...sync, ebs: volumes.details, rds: rdsDetails, network: networkDetails, kubernetes: kubernetesDetails, schedule: scheduleDetails };
+    return { analyzed, findings, ...sync, ebs: volumes.details, rds: rdsDetails, aurora: auroraDetails, rdsBackup: rdsBackupDetails, s3: s3Details, lambda: lambdaDetails, network: networkDetails, snapshots: snapshotDetails, kubernetes: kubernetesDetails, schedule: scheduleDetails };
   }
 
   private async analyzeVolumes(

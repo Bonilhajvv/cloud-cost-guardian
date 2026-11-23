@@ -34,6 +34,8 @@ func Collect(ctx context.Context, k *Kube, installMethod string) (*Report, error
 		return nil, fmt.Errorf("get version: %w", err)
 	}
 
+	clusterUID := clusterUID(ctx, k)
+
 	var s Snapshot
 	var err error
 	if s.Nodes, err = listInto[kubeNode](ctx, k, "/api/v1/nodes", true); err != nil {
@@ -65,12 +67,24 @@ func Collect(ctx context.Context, k *Kube, installMethod string) (*Report, error
 	return &Report{
 		AgentVersion:           agentVersion,
 		InstallMethod:          installMethod,
+		ClusterUID:             clusterUID,
 		KubernetesVersion:      version.GitVersion,
 		MetricsServerAvailable: metricsAvailable,
 		CollectedAt:            time.Now().UTC().Format(time.RFC3339),
 		Nodes:                  nodes,
 		Workloads:              workloads,
 	}, nil
+}
+
+func clusterUID(ctx context.Context, k *Kube) string {
+	var ns struct {
+		Metadata objectMeta `json:"metadata"`
+	}
+	if err := k.Get(ctx, "/api/v1/namespaces/kube-system", &ns); err != nil {
+		slog.Warn("cluster uid unavailable", "error", err.Error())
+		return ""
+	}
+	return ns.Metadata.UID
 }
 
 func filesystemOf(summary kubeletSummary) (Filesystem, bool) {

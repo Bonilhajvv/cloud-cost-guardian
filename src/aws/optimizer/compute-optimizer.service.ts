@@ -1,10 +1,12 @@
-import { ComputeOptimizerClient, GetEC2InstanceRecommendationsCommand, GetRDSDatabaseRecommendationsCommand } from '@aws-sdk/client-compute-optimizer';
+import { ComputeOptimizerClient, GetEC2InstanceRecommendationsCommand, GetLambdaFunctionRecommendationsCommand, GetRDSDatabaseRecommendationsCommand } from '@aws-sdk/client-compute-optimizer';
 import { Injectable } from '@nestjs/common';
 import { AwsAccountRef } from '../core/interfaces/aws-account-ref.interface';
 import { AwsClientFactory } from '../core/aws-client.factory';
 import { toAwsIntegrationError } from '../core/errors/aws-integration.error';
 import { Ec2OptimizerRecommendation, Ec2OptimizerResult } from './interfaces/ec2-optimizer.interface';
 import { normalizeEc2Recommendation } from './helpers/normalize-ec2-recommendation.helper';
+import { normalizeLambdaRecommendation } from './helpers/normalize-lambda-recommendation.helper';
+import { LambdaOptimizerRecommendation, LambdaOptimizerResult } from './interfaces/lambda-optimizer.interface';
 import { normalizeRdsRecommendation } from './helpers/normalize-rds-recommendation.helper';
 import { RdsOptimizerRecommendation, RdsOptimizerResult } from './interfaces/rds-optimizer.interface';
 
@@ -51,6 +53,28 @@ export class ComputeOptimizerService {
       } while (nextToken);
     } catch (error) {
       const err = toAwsIntegrationError(error, `GetRDSDatabaseRecommendations ${region}`);
+      if (err.code === 'NOT_ENROLLED') return { availability: 'NOT_ENROLLED', recommendations: [] };
+      if (err.code === 'ACCESS_DENIED') return { availability: 'ACCESS_DENIED', recommendations: [] };
+      throw err;
+    }
+    return { availability: 'OK', recommendations };
+  }
+
+  async getLambdaRecommendations(account: AwsAccountRef, region: string): Promise<LambdaOptimizerResult> {
+    const client = await this.clients.createClient(ComputeOptimizerClient, account, region);
+    const recommendations: LambdaOptimizerRecommendation[] = [];
+    try {
+      let nextToken: string | undefined;
+      do {
+        const page = await client.send(new GetLambdaFunctionRecommendationsCommand({ nextToken }));
+        for (const r of page.lambdaFunctionRecommendations ?? []) {
+          const normalized = normalizeLambdaRecommendation(r);
+          if (normalized) recommendations.push(normalized);
+        }
+        nextToken = page.nextToken;
+      } while (nextToken);
+    } catch (error) {
+      const err = toAwsIntegrationError(error, `GetLambdaFunctionRecommendations ${region}`);
       if (err.code === 'NOT_ENROLLED') return { availability: 'NOT_ENROLLED', recommendations: [] };
       if (err.code === 'ACCESS_DENIED') return { availability: 'ACCESS_DENIED', recommendations: [] };
       throw err;

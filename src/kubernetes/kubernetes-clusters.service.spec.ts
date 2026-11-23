@@ -60,3 +60,16 @@ describe('KubernetesClustersService.suggestions', () => {
     expect(groups.map((g) => g.clusterName)).toEqual(['acme-ec2-kubernetes-hml']);
   });
 });
+
+describe('KubernetesClustersService.regenerateInstall', () => {
+  it('unbinds the cluster uid so the agent can be reinstalled on a recreated cluster', async () => {
+    const cluster = { id: 'c-1', organizationId: 'org-1', status: 'CONNECTED', agentTokenVersion: 2, clusterUid: '6f1c2a0e-1b2c-4d3e-8f90-123456789abc' };
+    const clusters = { findOneBy: jest.fn().mockResolvedValue(cluster), update: jest.fn() };
+    const config = { get: jest.fn().mockReturnValue('https://api.example') };
+    const service = new KubernetesClustersService(clusters as never, {} as never, {} as never, {} as never, {} as never, {} as never, config as never);
+
+    await service.regenerateInstall({ organizationId: 'org-1' } as never, 'c-1');
+
+    expect(clusters.update).toHaveBeenCalledWith({ id: 'c-1' }, expect.objectContaining({ clusterUid: null, agentTokenVersion: 2 }));
+  });
+});

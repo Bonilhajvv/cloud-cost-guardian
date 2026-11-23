@@ -1,7 +1,24 @@
+import { EKS_ACCESS_GROUP } from '../constants/eks-connection.constant';
 import { AGENT_NAMESPACE } from '../constants/kubernetes.constant';
 import { ManifestParams } from '../interfaces/kubernetes.interface';
 
 const q = (value: string): string => JSON.stringify(value);
+
+const READ_RULES = `  - apiGroups: [""]
+    resources: ["nodes", "pods", "namespaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list"]`;
 
 const RBAC = `apiVersion: v1
 kind: Namespace
@@ -22,23 +39,9 @@ metadata:
   name: ccg-agent-readonly
 rules:
   - apiGroups: [""]
-    resources: ["nodes", "pods", "namespaces"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: [""]
     resources: ["nodes/stats"]
     verbs: ["get"]
-  - apiGroups: ["apps"]
-    resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["batch"]
-    resources: ["jobs", "cronjobs"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["autoscaling"]
-    resources: ["horizontalpodautoscalers"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["metrics.k8s.io"]
-    resources: ["nodes", "pods"]
-    verbs: ["get", "list"]
+${READ_RULES}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -133,5 +136,28 @@ clusterName: ${q(p.clusterName)}
 apiUrl: ${q(p.apiUrl)}
 agentToken: ${q(p.agentToken)}
 image: ${q(p.image)}
+`;
+}
+
+export function renderEksRbac(): string {
+  return `apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ccg-eks-readonly
+rules:
+${READ_RULES}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ccg-eks-readonly
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ccg-eks-readonly
+subjects:
+  - kind: Group
+    apiGroup: rbac.authorization.k8s.io
+    name: ${EKS_ACCESS_GROUP}
 `;
 }

@@ -54,6 +54,7 @@ type ReportWorkload struct {
 type Report struct {
 	AgentVersion           string           `json:"agentVersion"`
 	InstallMethod          string           `json:"installMethod"`
+	ClusterUID             string           `json:"clusterUid,omitempty"`
 	KubernetesVersion      string           `json:"kubernetesVersion"`
 	MetricsServerAvailable bool             `json:"metricsServerAvailable"`
 	CollectedAt            string           `json:"collectedAt"`
@@ -68,6 +69,7 @@ type ownerRef struct {
 }
 
 type objectMeta struct {
+	UID             string            `json:"uid"`
 	Name            string            `json:"name"`
 	Namespace       string            `json:"namespace"`
 	Labels          map[string]string `json:"labels"`

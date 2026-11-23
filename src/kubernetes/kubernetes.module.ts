@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AwsEksModule } from '../aws/eks/aws-eks.module';
 import { AwsAccountsModule } from '../aws-accounts/aws-accounts.module';
 import { ResourceInventoryModule } from '../resource-inventory/resource-inventory.module';
 import { KubernetesCluster } from './entities/kubernetes-cluster.entity';
@@ -9,6 +10,7 @@ import { KubernetesUsageSample } from './entities/kubernetes-usage-sample.entity
 import { KubernetesWorkload } from './entities/kubernetes-workload.entity';
 import { KubernetesWorkloadUsageDaily } from './entities/kubernetes-workload-usage-daily.entity';
 import { AgentTokenGuard } from './guards/agent-token.guard';
+import { EksConnectionsService } from './eks-connections.service';
 import { KubernetesAgentController } from './kubernetes-agent.controller';
 import { KubernetesClustersController } from './kubernetes-clusters.controller';
 import { KubernetesClustersService } from './kubernetes-clusters.service';
@@ -22,9 +24,10 @@ import { KubernetesMetricsService } from './kubernetes-metrics.service';
     TypeOrmModule.forFeature([KubernetesCluster, KubernetesNode, KubernetesWorkload, KubernetesUsageSample, KubernetesWorkloadUsageDaily, KubernetesContainerUsageDaily]),
     AwsAccountsModule,
     ResourceInventoryModule,
+    AwsEksModule,
   ],
   controllers: [KubernetesClustersController, KubernetesInstallController, KubernetesAgentController],
-  providers: [KubernetesClustersService, KubernetesIngestService, KubernetesMetricsService, KubernetesAnalyzerService, AgentTokenGuard],
-  exports: [KubernetesMetricsService, KubernetesClustersService, KubernetesAnalyzerService],
+  providers: [KubernetesClustersService, KubernetesIngestService, KubernetesMetricsService, KubernetesAnalyzerService, AgentTokenGuard, EksConnectionsService],
+  exports: [KubernetesMetricsService, KubernetesClustersService, KubernetesAnalyzerService, EksConnectionsService],
 })
 export class KubernetesModule {}

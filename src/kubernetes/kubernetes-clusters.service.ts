@@ -6,7 +6,7 @@ import { AuditService } from '../audit/audit.service';
 import { isEc2Analysis } from '../aws/core/helpers/resource-analysis.helper';
 import { AwsAccountsService } from '../aws-accounts/aws-accounts.service';
 import { PaginationQueryDto } from '../common/dto/pagination.dto';
-import { AuditAction, KubernetesClusterStatus } from '../common/enums';
+import { AuditAction, KubernetesClusterStatus, KubernetesConnectionMode } from '../common/enums';
 import { paginate } from '../common/helpers/paginate.helper';
 import { round } from '../common/helpers/stats.helper';
 import { Paginated } from '../common/interfaces/paginated.interface';
@@ -55,6 +55,7 @@ export class KubernetesClustersService {
 
   async regenerateInstall(user: TenantUser, id: string): Promise<ClusterInstallDto> {
     const cluster = await this.get(user.organizationId, id);
+    if (cluster.connectionMode === KubernetesConnectionMode.EKS_API) throw new ConflictException('This cluster is connected through the EKS API: use test-connection');
     if (cluster.status === KubernetesClusterStatus.REVOKED) {
       cluster.status = KubernetesClusterStatus.PENDING;
       cluster.agentTokenVersion += 1;
@@ -203,6 +204,7 @@ export class KubernetesClustersService {
     if (!parsed) return null;
     const cluster = await this.clusters.findOneBy({ id: parsed.clusterId });
     if (!cluster || cluster.status === KubernetesClusterStatus.REVOKED) return null;
+    if (cluster.connectionMode === KubernetesConnectionMode.EKS_API) return null;
     if (cluster.agentTokenVersion !== parsed.version) return null;
     return { clusterId: cluster.id, organizationId: cluster.organizationId };
   }
@@ -217,6 +219,7 @@ export class KubernetesClustersService {
         installTokenExpiresAt: expiresAt,
         status: cluster.status,
         agentTokenVersion: cluster.agentTokenVersion,
+        clusterUid: null,
       },
     );
     const base = `${this.config.get('PUBLIC_API_URL', { infer: true })}${INSTALL_MANIFEST_PATH}/${installToken}`;

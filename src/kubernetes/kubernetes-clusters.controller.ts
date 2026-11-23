@@ -6,6 +6,8 @@ import { ORG_READ_ROLES, Role } from '../common/enums';
 import { TenantUser } from '../common/interfaces/request-user.interface';
 import { ClusterInstallDto } from './dto/cluster-install.dto';
 import { CreateClusterDto } from './dto/create-cluster.dto';
+import { CreateEksConnectionDto, EksCollectResultDto, EksConnectionDto } from './dto/eks-connection.dto';
+import { EksConnectionsService } from './eks-connections.service';
 import { ListNamespacesDto } from './dto/list-namespaces.dto';
 import { SetClusterEnvironmentDto, SetNamespaceEnvironmentsDto } from './dto/set-cluster-environment.dto';
 import { KubernetesClustersService } from './kubernetes-clusters.service';
@@ -14,13 +16,31 @@ import { KubernetesClustersService } from './kubernetes-clusters.service';
 @ApiBearerAuth()
 @Controller('kubernetes-clusters')
 export class KubernetesClustersController {
-  constructor(private readonly clusters: KubernetesClustersService) {}
+  constructor(
+    private readonly clusters: KubernetesClustersService,
+    private readonly eksConnections: EksConnectionsService,
+  ) {}
 
   @Post()
   @Roles(Role.ORG_ADMIN)
   @ApiOkResponse({ type: ClusterInstallDto })
   create(@CurrentUser() user: TenantUser, @Body() dto: CreateClusterDto) {
     return this.clusters.create(user, dto);
+  }
+
+  @Post('eks')
+  @Roles(Role.ORG_ADMIN)
+  @ApiOkResponse({ type: EksConnectionDto })
+  connectEks(@CurrentUser() user: TenantUser, @Body() dto: CreateEksConnectionDto) {
+    return this.eksConnections.create(user, dto);
+  }
+
+  @Post(':id/test-connection')
+  @HttpCode(200)
+  @Roles(Role.ORG_ADMIN)
+  @ApiOkResponse({ type: EksCollectResultDto })
+  testConnection(@CurrentUser() user: TenantUser, @Param('id', ParseUUIDPipe) id: string) {
+    return this.eksConnections.testConnection(user, id);
   }
 
   @Get()

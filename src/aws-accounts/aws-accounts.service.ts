@@ -20,8 +20,9 @@ import { UpdateAwsAccountDto } from './dto/update-aws-account.dto';
 import { AwsAccount } from './entities/aws-account.entity';
 import { buildQuickCreateUrl, predictedRoleArn } from './helpers/cloudformation.helper';
 import { buildPermissionsPolicy, buildTrustPolicy } from './helpers/iam-policy.helper';
-
 import { CommitmentSnapshot } from '../aws/costs/interfaces/commitment.interface';
+import { CostExportState } from '../aws/data-exports/interfaces/data-export.interface';
+import { RdsBackupSnapshot } from '../aws/rds/interfaces/rds-backup.interface';
 import { NetworkSnapshot } from '../aws/network/interfaces/network.interface';
 
 @Injectable()
@@ -86,7 +87,7 @@ export class AwsAccountsService {
       platformAccountId,
       suggestedRoleName: SUGGESTED_ROLE_NAME,
       trustPolicy: buildTrustPolicy(platformAccountId, account.externalId),
-      permissionsPolicy: buildPermissionsPolicy(),
+      permissionsPolicy: buildPermissionsPolicy(account.awsAccountId),
       expectedRoleArn: account.roleArn ?? predictedRoleArn(account.awsAccountId),
       cloudFormation: {
         quickCreateUrl: hostedTemplate ? buildQuickCreateUrl(hostedTemplate, account.externalId, platformAccountId) : null,
@@ -200,6 +201,14 @@ export class AwsAccountsService {
 
   async saveNetwork(id: string, network: NetworkSnapshot): Promise<void> {
     await this.repo.update({ id }, { network });
+  }
+
+  async saveCostExport(id: string, costExport: CostExportState): Promise<void> {
+    await this.repo.update({ id }, { costExport });
+  }
+
+  async saveRdsBackup(id: string, rdsBackup: RdsBackupSnapshot): Promise<void> {
+    await this.repo.update({ id }, { rdsBackup });
   }
 
   commitmentsByOrganization(organizationId: string): Promise<Pick<AwsAccount, 'awsAccountId' | 'name' | 'commitments' | 'network'>[]> {

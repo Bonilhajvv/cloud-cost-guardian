@@ -1,3 +1,4 @@
+import { RESERVED_INSTANCES_USAGE_KEY, SAVINGS_PLANS_USAGE_KEY } from '../../aws/data-exports/constants/data-exports.constant';
 import { RecommendationStatus, RecommendationType } from '../../common/enums';
 import { ResolutionReason } from '../interfaces/recommendation-metadata.interface';
 
@@ -50,7 +51,28 @@ export const RDS_RECOMMENDATION_TYPES = [
   RecommendationType.RDS_MULTI_AZ,
   RecommendationType.RDS_EXTENDED_SUPPORT,
   RecommendationType.RDS_PUBLIC_ACCESS,
+  RecommendationType.RDS_STORAGE_SHRINK,
+  RecommendationType.RDS_STORAGE_TYPE,
 ] as const;
+
+export const RDS_BACKUP_RECOMMENDATION_TYPES = [RecommendationType.RDS_BACKUP_EXCESS] as const;
+
+export const AURORA_RECOMMENDATION_TYPES = [
+  RecommendationType.AURORA_READER_IDLE,
+  RecommendationType.AURORA_CLUSTER_IDLE,
+  RecommendationType.AURORA_SERVERLESS_MIN_CAPACITY,
+  RecommendationType.AURORA_STORAGE_MODE,
+] as const;
+
+export const S3_RECOMMENDATION_TYPES = [RecommendationType.S3_LIFECYCLE] as const;
+
+export const LAMBDA_RECOMMENDATION_TYPES = [
+  RecommendationType.LAMBDA_RIGHTSIZING,
+  RecommendationType.LAMBDA_ARM64,
+  RecommendationType.LAMBDA_PROVISIONED_CONCURRENCY,
+] as const;
+
+export const SNAPSHOT_RECOMMENDATION_TYPES = [RecommendationType.EBS_SNAPSHOT_OLD, RecommendationType.RDS_SNAPSHOT_OLD] as const;
 
 export const SCHEDULE_RECOMMENDATION_TYPES = [RecommendationType.EC2_SCHEDULE] as const;
 
@@ -90,12 +112,47 @@ export const OPPORTUNITY_LABELS: Record<RecommendationType, string> = {
   [RecommendationType.EC2_SCHEDULE]: 'Scheduling',
   [RecommendationType.K8S_NODE_GROUP_SCHEDULE]: 'Scheduling',
   [RecommendationType.K8S_NAMESPACE_SCHEDULE]: 'Scheduling',
+  [RecommendationType.EBS_SNAPSHOT_OLD]: 'Snapshots',
+  [RecommendationType.RDS_SNAPSHOT_OLD]: 'Snapshots',
+  [RecommendationType.RDS_STORAGE_SHRINK]: 'RDS',
+  [RecommendationType.RDS_STORAGE_TYPE]: 'RDS',
+  [RecommendationType.RDS_BACKUP_EXCESS]: 'RDS',
+  [RecommendationType.AURORA_READER_IDLE]: 'Idle Resources',
+  [RecommendationType.AURORA_CLUSTER_IDLE]: 'Idle Resources',
+  [RecommendationType.AURORA_SERVERLESS_MIN_CAPACITY]: 'Aurora',
+  [RecommendationType.AURORA_STORAGE_MODE]: 'Aurora',
+  [RecommendationType.S3_LIFECYCLE]: 'S3',
+  [RecommendationType.LAMBDA_ARM64]: 'Lambda',
+  [RecommendationType.LAMBDA_PROVISIONED_CONCURRENCY]: 'Lambda',
 };
 
-export const REMOVAL_TYPES: readonly RecommendationType[] = [RecommendationType.EC2_IDLE, RecommendationType.EBS_UNUSED, RecommendationType.EC2_STOPPED, RecommendationType.RDS_IDLE, RecommendationType.EIP_UNUSED, RecommendationType.NAT_GATEWAY_IDLE, RecommendationType.LOAD_BALANCER_IDLE];
+export const REMOVAL_TYPES: readonly RecommendationType[] = [RecommendationType.EC2_IDLE, RecommendationType.EBS_UNUSED, RecommendationType.EC2_STOPPED, RecommendationType.RDS_IDLE, RecommendationType.EIP_UNUSED, RecommendationType.NAT_GATEWAY_IDLE, RecommendationType.LOAD_BALANCER_IDLE, RecommendationType.EBS_SNAPSHOT_OLD, RecommendationType.RDS_SNAPSHOT_OLD, RecommendationType.AURORA_READER_IDLE, RecommendationType.AURORA_CLUSTER_IDLE];
 
 export const COST_INCREASE_TYPES: readonly RecommendationType[] = [RecommendationType.EC2_UPSIZE, RecommendationType.EBS_EXPAND, RecommendationType.RDS_UPSIZE, RecommendationType.K8S_WORKLOAD_UNDERSIZED];
 
 export const TRACKED_STATUSES = [...POTENTIAL_STATUSES, RecommendationStatus.ACCEPTED] as const;
 
 export const ACCEPTED_CLOSING_REASONS: readonly ResolutionReason[] = ['APPLIED', 'CHANGED_DIFFERENTLY', 'RESOURCE_REMOVED'];
+
+export const HOURLY_RATE_MEASURED_TYPES: readonly RecommendationType[] = [RecommendationType.EC2_RIGHTSIZING, RecommendationType.RDS_RIGHTSIZING];
+
+export const COMMITMENT_USAGE_KEYS: Partial<Record<RecommendationType, string>> = {
+  [RecommendationType.SAVINGS_PLAN_PURCHASE]: SAVINGS_PLANS_USAGE_KEY,
+  [RecommendationType.RESERVED_INSTANCE_PURCHASE]: RESERVED_INSTANCES_USAGE_KEY,
+};
+
+export const TOTAL_COST_MEASURED_TYPES: readonly RecommendationType[] = [
+  ...REMOVAL_TYPES,
+  RecommendationType.EC2_SCHEDULE,
+  RecommendationType.EBS_OPTIMIZATION,
+  RecommendationType.RDS_MULTI_AZ,
+  RecommendationType.RDS_EXTENDED_SUPPORT,
+  RecommendationType.RDS_STORAGE_SHRINK,
+  RecommendationType.RDS_STORAGE_TYPE,
+];
+
+export const MEASURED_TYPES: readonly RecommendationType[] = [
+  ...HOURLY_RATE_MEASURED_TYPES,
+  ...TOTAL_COST_MEASURED_TYPES,
+  ...(Object.keys(COMMITMENT_USAGE_KEYS) as RecommendationType[]),
+];

@@ -19,7 +19,13 @@ import { LockResult } from '../database/interfaces/lock-result.interface';
 import { CommitmentSyncService } from './commitment-sync.service';
 import { Ec2ScheduleScanService } from './ec2-schedule-scan.service';
 import { KubernetesScanService } from './kubernetes-scan.service';
+import { SnapshotScanService } from './snapshot-scan.service';
 import { NetworkScanService } from './network-scan.service';
+import { AuroraScanService } from './aurora-scan.service';
+import { LambdaScanService } from './lambda-scan.service';
+import { RdsBackupScanService } from './rds-backup-scan.service';
+import { RealizedSavingsService } from './realized-savings.service';
+import { S3ScanService } from './s3-scan.service';
 import { RdsScanService } from './rds-scan.service';
 import { KubernetesMetricsService } from '../kubernetes/kubernetes-metrics.service';
 import { RecommendationsService } from '../recommendations/recommendations.service';
@@ -163,6 +169,10 @@ function build() {
       scan: jest.fn().mockResolvedValue({ elasticIps: 0, natGateways: 0, loadBalancers: 0, publicIpv4: 0, unavailable: [], failures: [] }),
       analyze: jest.fn().mockResolvedValue({ analyzed: 0, findings: {}, created: 0, updated: 0, resolved: 0, skipped: 0 }),
     },
+    snapshotScan: {
+      scan: jest.fn().mockResolvedValue({ ebsSnapshots: 0, rdsSnapshots: 0, unavailable: [], failures: [] }),
+      analyze: jest.fn().mockResolvedValue({ analyzed: 0, findings: {}, created: 0, updated: 0, resolved: 0, skipped: 0 }),
+    },
     scheduleScan: { analyze: jest.fn().mockResolvedValue({ analyzed: 0, findings: {}, created: 0, updated: 0, resolved: 0, skipped: 0 }) },
     kubernetesScan: { analyze: jest.fn().mockResolvedValue({ analyzed: 0, findings: {}, created: 0, updated: 0, resolved: 0, skipped: 0 }) },
     rdsScan: {
@@ -170,6 +180,11 @@ function build() {
       syncOptimizer: jest.fn().mockResolvedValue({ regions: {}, recommendations: 0, failures: [] }),
       analyze: jest.fn().mockResolvedValue({ analyzed: 0, findings: {}, created: 0, updated: 0, resolved: 0, skipped: 0 }),
     },
+    auroraScan: { scan: jest.fn().mockResolvedValue({ resources: 0, unavailable: [], failures: [] }), analyze: jest.fn() },
+    s3Scan: { scan: jest.fn().mockResolvedValue({ resources: 0, unavailable: [], failures: [] }), analyze: jest.fn() },
+    lambdaScan: { scan: jest.fn().mockResolvedValue({ resources: 0, unavailable: [], failures: [] }), syncOptimizer: jest.fn(), analyze: jest.fn() },
+    rdsBackupScan: { sync: jest.fn(), analyze: jest.fn() },
+    realizedSavings: { sync: jest.fn() },
     kubernetesMetrics: { nodeMemoryStats: jest.fn().mockResolvedValue(new Map()), nodeDiskStats: jest.fn().mockResolvedValue(new Map()), nodesByInstanceIds: jest.fn().mockResolvedValue(new Map()) },
   };
   const orchestrator = new ScanOrchestratorService(
@@ -194,6 +209,12 @@ function build() {
     deps.networkScan as unknown as NetworkScanService,
     deps.kubernetesScan as unknown as KubernetesScanService,
     deps.scheduleScan as unknown as Ec2ScheduleScanService,
+    deps.snapshotScan as unknown as SnapshotScanService,
+    deps.auroraScan as unknown as AuroraScanService,
+    deps.s3Scan as unknown as S3ScanService,
+    deps.lambdaScan as unknown as LambdaScanService,
+    deps.rdsBackupScan as unknown as RdsBackupScanService,
+    deps.realizedSavings as unknown as RealizedSavingsService,
   );
   return { orchestrator, deps, store };
 }

@@ -9,6 +9,11 @@ import { RdsUtilizationMetrics } from '../../aws/metrics/interfaces/rds-metrics.
 import { RdsOptimizerRecommendation } from '../../aws/optimizer/interfaces/rds-optimizer.interface';
 import { RdsPrices } from '../../aws/rds/interfaces/rds-analysis.interface';
 import { NetworkPrices, NetworkResource } from '../../aws/network/interfaces/network.interface';
+import { SnapshotResource } from '../../aws/snapshots/interfaces/snapshot.interface';
+import { MaxConnectionsSetting } from '../../aws/rds/interfaces/max-connections.interface';
+import { AuroraClusterMetadata } from '../../aws/rds/interfaces/aurora.interface';
+import { S3BucketMetadata } from '../../aws/s3/interfaces/s3.interface';
+import { LambdaFunctionMetadata } from '../../aws/lambda/interfaces/lambda.interface';
 import { RdsEngineLifecycle, RdsInstance } from '../../aws/rds/interfaces/rds-instance.interface';
 
 export interface KubernetesNodeLink {
@@ -42,10 +47,16 @@ export interface AwsResourceMetadata {
   rds?: RdsInstance;
   rdsMetrics?: RdsUtilizationMetrics | null;
   rdsPrices?: RdsPrices;
+  rdsMaxConnections?: MaxConnectionsSetting;
   rdsLifecycle?: RdsEngineLifecycle | null;
   rdsExtendedSupportHourlyPerVcpu?: number | null;
   rdsOptimizer?: RdsOptimizerRecommendation | null;
   network?: NetworkResource;
   networkPrices?: NetworkPrices | null;
+  snapshot?: SnapshotResource;
+  snapshotPricePerGbMonth?: number | null;
+  auroraCluster?: AuroraClusterMetadata;
+  s3Bucket?: S3BucketMetadata;
+  lambdaFunction?: LambdaFunctionMetadata;
   analysis?: ResourceAnalysis;
 }

@@ -164,6 +164,11 @@ export class CloudWatchService {
       rds('cpuAvg', 'CPUUtilization', 'Average');
       rds('cpuMax', 'CPUUtilization', 'Maximum');
       rds('connections', 'DatabaseConnections', 'Maximum');
+      rds('freeStorage', 'FreeStorageSpace', 'Minimum');
+      rds('readIops', 'ReadIOPS', 'Maximum');
+      rds('writeIops', 'WriteIOPS', 'Maximum');
+      rds('readBytes', 'ReadThroughput', 'Maximum');
+      rds('writeBytes', 'WriteThroughput', 'Maximum');
     }
     const end = new Date();
     const series = await this.fetch(client, specs, new Date(end.getTime() - periodDays * DAY * 1000), end, region);
@@ -193,6 +198,24 @@ export class CloudWatchService {
         total: previous?.total === null || previous === undefined ? total : total === null ? previous.total : previous.total + total,
         datapoints: Math.max(previous?.datapoints ?? 0, s.values.length),
       });
+    });
+    return result;
+  }
+
+  async getMetricSeries<K extends string>(
+    account: AwsAccountRef,
+    region: string,
+    specs: MetricQuerySpec<K>[],
+    periodDays = 14,
+  ): Promise<Map<string, Partial<Record<K, TimeSeries>>>> {
+    const result = new Map<string, Partial<Record<K, TimeSeries>>>();
+    if (specs.length === 0) return result;
+    const client = await this.clients.createClient(CloudWatchClient, account, region);
+    const end = new Date();
+    const series = await this.fetch(client, specs, new Date(end.getTime() - periodDays * DAY * 1000), end, region);
+    series.forEach((s, i) => {
+      const { ownerId, kind } = specs[i];
+      result.set(ownerId, { ...result.get(ownerId), [kind]: s } as Partial<Record<K, TimeSeries>>);
     });
     return result;
   }

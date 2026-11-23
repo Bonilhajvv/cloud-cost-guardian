@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { ConflictException, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, LessThan, Repository } from 'typeorm';
 import { AuditService } from '../audit/audit.service';
@@ -18,6 +18,7 @@ import { detectProvider } from './helpers/provider.helper';
 import { ipsToResolve, resolveNodeInstanceIds } from './helpers/node-instance.helper';
 import { AgentPrincipal } from './interfaces/kubernetes.interface';
 import { containerSpecs } from './helpers/container-spec.helper';
+import { boundClusterUid, CLUSTER_UID_MISMATCH } from './helpers/cluster-uid.helper';
 
 @Injectable()
 export class KubernetesIngestService {
@@ -32,6 +33,11 @@ export class KubernetesIngestService {
   async ingest(agent: AgentPrincipal, report: AgentReportDto): Promise<{ accepted: true; nodes: number; workloads: number; linkedInstances: number }> {
     const seenAt = new Date();
     const cluster = await this.clusters.findOneByOrFail({ id: agent.clusterId });
+    const clusterUid = boundClusterUid(cluster.clusterUid, report.clusterUid);
+    if (clusterUid === CLUSTER_UID_MISMATCH) {
+      this.logger.warn({ msg: 'Kubernetes report from another cluster rejected', clusterId: cluster.id, organizationId: agent.organizationId });
+      throw new ConflictException('Agent token belongs to another cluster: generate a new install manifest for this cluster');
+    }
     const firstConnection = cluster.connectedAt === null;
     const podCount = report.nodes.reduce((s, n) => s + n.podCount, 0);
     const instanceIds = await this.resolveInstanceIds(agent, report.nodes);
@@ -41,6 +47,7 @@ export class KubernetesIngestService {
         status: KubernetesClusterStatus.CONNECTED,
         provider: detectProvider(report.nodes),
         installMethod: report.installMethod,
+        clusterUid,
         agentVersion: report.agentVersion,
         kubernetesVersion: report.kubernetesVersion,
         metricsServerAvailable: report.metricsServerAvailable,

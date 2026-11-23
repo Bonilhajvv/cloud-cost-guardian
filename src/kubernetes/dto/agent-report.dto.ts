@@ -10,6 +10,7 @@ import {
   IsNumber,
   IsObject,
   IsOptional,
+  IsUUID,
   IsString,
   MaxLength,
   Min,
@@ -179,6 +180,10 @@ export class AgentReportDto {
 
   @IsIn(['kubectl', 'helm', 'unknown'])
   installMethod: 'kubectl' | 'helm' | 'unknown';
+
+  @IsOptional()
+  @IsUUID()
+  clusterUid?: string;
 
   @IsString()
   @MaxLength(64)

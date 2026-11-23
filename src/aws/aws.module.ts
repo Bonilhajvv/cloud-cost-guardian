@@ -9,6 +9,11 @@ import { AwsPricingModule } from './pricing/aws-pricing.module';
 import { AwsRdsModule } from './rds/aws-rds.module';
 import { AwsCommitmentsModule } from './commitments/aws-commitments.module';
 import { AwsNetworkModule } from './network/aws-network.module';
+import { AwsSnapshotsModule } from './snapshots/aws-snapshots.module';
+import { AwsDataExportsModule } from './data-exports/aws-data-exports.module';
+import { AwsEksModule } from './eks/aws-eks.module';
+import { AwsLambdaModule } from './lambda/aws-lambda.module';
+import { AwsS3Module } from './s3/aws-s3.module';
 import { AwsResourcesModule } from './resources/aws-resources.module';
 
 const modules = [
@@ -23,6 +28,11 @@ const modules = [
   AwsRdsModule,
   AwsCommitmentsModule,
   AwsNetworkModule,
+  AwsSnapshotsModule,
+  AwsDataExportsModule,
+  AwsS3Module,
+  AwsLambdaModule,
+  AwsEksModule,
 ];
 
 @Module({

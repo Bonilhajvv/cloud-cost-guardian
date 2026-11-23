@@ -218,8 +218,105 @@ describe('RdsAnalyzerService', () => {
     expect(result.drafts[0].description).toContain('--no-publicly-accessible');
   });
 
-  it('skips Aurora members and databases that are not available', () => {
-    expect(analyzer.analyze(input({ instance: db({ engine: 'aurora-postgresql', clusterId: 'c1' }) })).analysis.finding).toBe('NOT_ANALYZED');
+  it('leaves idle and Multi-AZ of Aurora members to the cluster, but resizes them', () => {
+    const metrics = { ...input().metrics!, connectionsMax: 0 };
+    const result = analyzer.analyze(
+      input({
+        instance: db({ engine: 'aurora-postgresql', clusterId: 'c1', multiAz: true, tags: { env: 'dev' } }),
+        metrics,
+        optimizer: optimizer({ finding: 'OVER_PROVISIONED', options: [{ instanceClass: 'db.t4g.large', rank: 1, performanceRisk: 1, estimatedMonthlySavings: 14.6 }] }),
+      }),
+    );
+    expect(types(result)).toEqual([RecommendationType.RDS_RIGHTSIZING]);
+    expect(result.drafts[0].description).toContain('resize a reader first');
+  });
+
+  describe('connection limit of the smaller class', () => {
+    const prices = { ...PRICES, byClass: { ...PRICES.byClass, 'db.t4g.medium': { monthly: 47, vcpu: 2, memoryGb: 4 }, 'db.t4g.large': { monthly: 94.9, vcpu: 2, memoryGb: 8 } } };
+    const options = [
+      { instanceClass: 'db.t4g.medium', rank: 1, performanceRisk: 1, estimatedMonthlySavings: 62 },
+      { instanceClass: 'db.t4g.large', rank: 2, performanceRisk: 1, estimatedMonthlySavings: 14 },
+    ];
+    const run = (connectionsMax: number, over: Partial<RdsAnalyzerInput> = {}) =>
+      analyzer.analyze(
+        input({ prices, maxConnections: { source: 'DEFAULT' }, metrics: { ...input().metrics!, connectionsMax }, optimizer: optimizer({ finding: 'OVER_PROVISIONED', options, utilization: {} }), ...over }),
+      );
+
+    it.each([
+      [200, 'db.t4g.medium', Level.MEDIUM],
+      [300, 'db.t4g.medium', Level.HIGH],
+      [400, 'db.t4g.large', Level.MEDIUM],
+    ])('peak of %i connections picks %s with risk %s', (peak, targetKey, risk) => {
+      expect(run(peak).drafts[0]).toMatchObject({ type: RecommendationType.RDS_RIGHTSIZING, targetKey, risk });
+    });
+
+    it('explains the discarded class and recommends nothing when none fits', () => {
+      const result = run(800);
+      expect(result.drafts).toEqual([]);
+      expect(result.analysis.finding).toBe('OPTIMIZED');
+      expect(result.analysis.metrics.notes.filter((n) => n.includes('discarded'))).toHaveLength(2);
+    });
+
+    it('blocks earlier in small classes, where AWS reserves much of the memory', () => {
+      const micro = { instance: db({ engine: 'mysql', engineVersion: '8.4.3' }), prices: { ...PRICES, byClass: { ...PRICES.byClass, 'db.t4g.micro': { monthly: 12, vcpu: 2, memoryGb: 1 } } }, optimizer: optimizer({ finding: 'OVER_PROVISIONED', options: [{ instanceClass: 'db.t4g.micro', rank: 1, performanceRisk: 1, estimatedMonthlySavings: 90 }], utilization: {} }) };
+      expect(run(60, micro).drafts).toEqual([]);
+      expect(run(30, micro).drafts).toHaveLength(1);
+    });
+
+    it('uses the highest peak between CloudWatch and Compute Optimizer', () => {
+      expect(run(10, { optimizer: optimizer({ finding: 'OVER_PROVISIONED', options, utilization: { 'DatabaseConnections Maximum': 400 } }) }).drafts[0].targetKey).toBe('db.t4g.large');
+    });
+
+    it('does not block when max_connections is fixed or unknown, and says so', () => {
+      expect(run(800, { maxConnections: { source: 'PARAMETER_GROUP', value: '1000' } }).drafts[0].description).toContain('fixed at 1000');
+      expect(run(800, { maxConnections: { source: 'PARAMETER_GROUP', value: '{DBInstanceClassMemory/9531392}*2' } }).drafts[0].description).toContain('is unknown');
+      expect(run(800, { prices: PRICES }).drafts[0].description).toContain('is unknown');
+    });
+
+    it('assumes the default and warns when the parameter group was not read', () => {
+      expect(run(400, { maxConnections: { source: 'UNREADABLE' } }).drafts[0]).toMatchObject({ targetKey: 'db.t4g.large', description: expect.stringContaining('engine default assumed') });
+    });
+  });
+
+  describe('storage', () => {
+    const storage = { gbMonth: { gp3: 0.115, io1: 0.125 }, iopsMonth: { io1: 0.1 } };
+    const metrics = (over: object) => ({ ...input().metrics!, freeStorageMinGb: 400, freeStorageDatapoints: 336, peakIops: 900, peakThroughputMBps: 40, ...over });
+
+    it('adds storage to the cost and recommends a smaller volume with headroom', () => {
+      const result = analyzer.analyze(input({ instance: db({ allocatedStorageGb: 500 }), metrics: metrics({}), prices: { ...PRICES, storage } }));
+      expect(result.analysis.current).toMatchObject({ storageMonthlyCost: 57.5, monthlyCost: 167 });
+      expect(result.drafts[0]).toMatchObject({ type: RecommendationType.RDS_STORAGE_SHRINK, estimatedMonthlySavings: 42.55, risk: Level.HIGH });
+      expect(result.drafts[0].title).toContain('500 GB to 130 GB');
+      expect(result.drafts[0].description).toContain('3000 IOPS');
+    });
+
+    it('does not shrink below 400 GB when the peak needs the larger gp3 baseline', () => {
+      const result = analyzer.analyze(input({ instance: db({ allocatedStorageGb: 500 }), metrics: metrics({ peakIops: 5000 }), prices: { ...PRICES, storage } }));
+      expect(result.drafts).toEqual([]);
+    });
+
+    it('does not shrink without enough data, without price or for replicas', () => {
+      const big = { allocatedStorageGb: 500 };
+      for (const over of [
+        { instance: db(big), metrics: metrics({ freeStorageDatapoints: 20 }), prices: { ...PRICES, storage } },
+        { instance: db(big), metrics: metrics({}), prices: PRICES },
+        { instance: db({ ...big, readReplicaSourceId: 'x' }), metrics: metrics({}), prices: { ...PRICES, storage } },
+      ]) {
+        expect(analyzer.analyze(input(over)).drafts).toEqual([]);
+      }
+    });
+
+    it('moves io1 to gp3 only when the peak fits the gp3 baseline', () => {
+      const instance = db({ storageType: 'io1', allocatedStorageGb: 100, iops: 3000 });
+      const fits = analyzer.analyze(input({ instance, metrics: metrics({ freeStorageMinGb: 10 }), prices: { ...PRICES, storage } }));
+      expect(fits.drafts[0]).toMatchObject({ type: RecommendationType.RDS_STORAGE_TYPE, estimatedMonthlySavings: 301 });
+      const tight = analyzer.analyze(input({ instance, metrics: metrics({ freeStorageMinGb: 10, peakIops: 2900 }), prices: { ...PRICES, storage } }));
+      expect(tight.drafts).toEqual([]);
+    });
+  });
+
+  it('skips Multi-AZ DB cluster members and databases that are not available', () => {
+    expect(analyzer.analyze(input({ instance: db({ engine: 'postgres', clusterId: 'c1' }) })).analysis.finding).toBe('NOT_ANALYZED');
     expect(analyzer.analyze(input({ instance: db({ status: 'stopped' }), optimizer: optimizer({ idle: true }) }))).toMatchObject({
       analysis: { finding: 'NOT_AVAILABLE' },
       drafts: [],

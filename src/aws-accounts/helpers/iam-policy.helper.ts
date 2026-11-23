@@ -1,3 +1,4 @@
+import { dataExportBucket } from '../../aws/data-exports/constants/data-exports.constant';
 import { READ_ONLY_ACTIONS } from '../constants/aws-account.constant';
 
 export function buildTrustPolicy(platformAccountId: string, externalId: string): Record<string, unknown> {
@@ -14,7 +15,7 @@ export function buildTrustPolicy(platformAccountId: string, externalId: string):
   };
 }
 
-export function buildPermissionsPolicy(): Record<string, unknown> {
+export function buildPermissionsPolicy(awsAccountId: string): Record<string, unknown> {
   return {
     Version: '2012-10-17',
     Statement: [
@@ -23,6 +24,12 @@ export function buildPermissionsPolicy(): Record<string, unknown> {
         Effect: 'Allow',
         Action: [...READ_ONLY_ACTIONS],
         Resource: '*',
+      },
+      {
+        Sid: 'CloudCostGuardianCostExport',
+        Effect: 'Allow',
+        Action: ['s3:ListBucket', 's3:GetObject'],
+        Resource: [`arn:aws:s3:::${dataExportBucket(awsAccountId)}`, `arn:aws:s3:::${dataExportBucket(awsAccountId)}/*`],
       },
     ],
   };

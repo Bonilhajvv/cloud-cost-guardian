@@ -26,7 +26,7 @@ describe('PricingService.getEbsPerformancePrices', () => {
 
 describe('PricingService RDS prices', () => {
   const product = (usd: string, unit: string, vcpu?: string) =>
-    JSON.stringify({ product: { attributes: vcpu ? { vcpu } : {} }, terms: { OnDemand: { t: { priceDimensions: { d: { unit, pricePerUnit: { USD: usd } } } } } } });
+    JSON.stringify({ product: { attributes: vcpu ? { vcpu, memory: '4 GiB' } : {} }, terms: { OnDemand: { t: { priceDimensions: { d: { unit, pricePerUnit: { USD: usd } } } } } } });
 
   it('returns the monthly price and vCPU of RDS classes and skips unknown engines', async () => {
     const service = new PricingService({ get: () => 3 } as unknown as ConfigService<never, true>);
@@ -36,7 +36,7 @@ describe('PricingService RDS prices', () => {
     });
     Object.assign(service, { client: { send } });
 
-    expect(await service.getRdsInstancePrices('us-east-1', 'postgres', 'Single-AZ', ['db.t3.medium'])).toEqual({ 'db.t3.medium': { monthly: 52.56, vcpu: 2 } });
+    expect(await service.getRdsInstancePrices('us-east-1', 'postgres', 'Single-AZ', ['db.t3.medium'])).toEqual({ 'db.t3.medium': { monthly: 52.56, vcpu: 2, memoryGb: 4 } });
     expect(await service.getRdsExtendedSupportHourlyPerVcpu('us-east-1', 'postgres', '13', 'Year 1, Year 2')).toBe(0.1);
     expect(await service.getRdsInstancePrices('us-east-1', 'oracle-ee', 'Single-AZ', ['db.m6i.large'])).toEqual({});
     expect(send.mock.calls.every(([c]) => c.input.ServiceCode === 'AmazonRDS')).toBe(true);

@@ -9,6 +9,9 @@ export interface RdsInstance {
   publiclyAccessible?: boolean;
   storageType: string | null;
   allocatedStorageGb: number | null;
+  iops?: number | null;
+  backupRetentionDays?: number | null;
+  parameterGroup?: string | null;
   status: string;
   clusterId: string | null;
   readReplicaSourceId: string | null;

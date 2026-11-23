@@ -5,22 +5,26 @@ import { AuditService } from '../audit/audit.service';
 import { AwsAccountRef } from '../aws/core/interfaces/aws-account-ref.interface';
 import { RecommendationDraft, ResourceAnalysis } from '../aws/core/interfaces/recommendation-draft.interface';
 import { AuditAction, RecommendationStatus, RecommendationType } from '../common/enums';
+import { addDays } from '../common/helpers/date.helper';
 import { paginate } from '../common/helpers/paginate.helper';
 import { round } from '../common/helpers/stats.helper';
 import { Paginated } from '../common/interfaces/paginated.interface';
 import { TenantUser } from '../common/interfaces/request-user.interface';
 import {
   ACTIVE_STATUSES,
+  MEASURED_TYPES,
   OPPORTUNITY_LABELS,
   POTENTIAL_STATUSES,
   STATUS_TRANSITIONS,
   TRACKED_STATUSES,
   ACCEPTED_CLOSING_REASONS,
 } from './constants/recommendation.constant';
+import { MEASURE_MAX_AGE_DAYS } from './constants/realized-savings.constant';
 import { ListRecommendationsDto } from './dto/list-recommendations.dto';
 import { UpdateRecommendationStatusDto } from './dto/update-recommendation-status.dto';
 import { resolutionFor, resolutionOutcome, typeChanged } from './helpers/resolution.helper';
 import { Recommendation } from './entities/recommendation.entity';
+import { RealizedMeasurement } from './interfaces/realized-measurement.interface';
 import { DraftSyncResult, SavingsSummary, TopOpportunity } from './interfaces/savings-summary.interface';
 
 @Injectable()
@@ -125,7 +129,10 @@ export class RecommendationsService {
     if (dto.status === RecommendationStatus.ACCEPTED) rec.acceptedAt = now;
     if (dto.status === RecommendationStatus.IMPLEMENTED) rec.implementedAt = now;
     if (dto.status === RecommendationStatus.RESOLVED) rec.resolvedAt = now;
-    if (dto.realizedMonthlySavings !== undefined) rec.realizedMonthlySavings = dto.realizedMonthlySavings;
+    if (dto.realizedMonthlySavings !== undefined) {
+      rec.realizedMonthlySavings = dto.realizedMonthlySavings;
+      rec.metadata = { ...rec.metadata, realizedSource: 'MANUAL' };
+    }
     const saved = await this.repo.save(rec);
 
     const action =
@@ -148,6 +155,26 @@ export class RecommendationsService {
     return saved;
   }
 
+  findMeasurable(awsAccountId: string, now: Date): Promise<Recommendation[]> {
+    return this.repo
+      .createQueryBuilder('r')
+      .where('r.awsAccountId = :awsAccountId', { awsAccountId })
+      .andWhere('r.implementedAt >= :since', { since: addDays(now, -MEASURE_MAX_AGE_DAYS) })
+      .andWhere('r.status IN (:...statuses)', { statuses: [RecommendationStatus.IMPLEMENTED, RecommendationStatus.RESOLVED] })
+      .andWhere('r.type IN (:...types)', { types: [...MEASURED_TYPES] })
+      .getMany();
+  }
+
+  async saveMeasurement(rec: Recommendation, measurement: RealizedMeasurement): Promise<void> {
+    rec.metadata = { ...rec.metadata, realizedMeasurement: measurement };
+    const informedByUser = rec.metadata.realizedSource === 'MANUAL' || (rec.realizedMonthlySavings !== null && !rec.metadata.realizedSource);
+    if (measurement.status === 'MEASURED' && !informedByUser) {
+      rec.realizedMonthlySavings = measurement.amount;
+      rec.metadata = { ...rec.metadata, realizedSource: 'COST_AND_USAGE_REPORT' };
+    }
+    await this.repo.save(rec);
+  }
+
   async savingsSummary(organizationId?: string): Promise<SavingsSummary> {
     const qb = this.repo
       .createQueryBuilder('r')
@@ -155,6 +182,7 @@ export class RecommendationsService {
       .addSelect(`COALESCE(SUM(r.estimatedMonthlySavings) FILTER (WHERE r.status = :accepted), 0)`, 'accepted')
       .addSelect(`COALESCE(SUM(r.estimatedMonthlySavings) FILTER (WHERE r.status = :implemented), 0)`, 'implemented')
       .addSelect(`COALESCE(SUM(r.realizedMonthlySavings), 0)`, 'realized')
+      .addSelect(`COALESCE(SUM(r.realizedMonthlySavings) FILTER (WHERE r.metadata->>'realizedSource' = 'COST_AND_USAGE_REPORT'), 0)`, 'measured')
       .addSelect(`COUNT(*) FILTER (WHERE r.status IN (:...potential))`, 'open')
       .setParameters({
         potential: [...POTENTIAL_STATUSES],
@@ -162,7 +190,7 @@ export class RecommendationsService {
         implemented: RecommendationStatus.IMPLEMENTED,
       });
     if (organizationId) qb.where('r.organizationId = :organizationId', { organizationId });
-    const row = await qb.getRawOne<Record<'potential' | 'accepted' | 'implemented' | 'realized' | 'open', string>>();
+    const row = await qb.getRawOne<Record<'potential' | 'accepted' | 'implemented' | 'realized' | 'measured' | 'open', string>>();
     const potential = round(Number(row?.potential ?? 0));
     return {
       currency: 'USD',
@@ -171,6 +199,7 @@ export class RecommendationsService {
       acceptedMonthly: round(Number(row?.accepted ?? 0)),
       implementedMonthly: round(Number(row?.implemented ?? 0)),
       realizedMonthly: round(Number(row?.realized ?? 0)),
+      realizedMeasuredMonthly: round(Number(row?.measured ?? 0)),
       openRecommendations: Number(row?.open ?? 0),
     };
   }

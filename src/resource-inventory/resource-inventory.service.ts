@@ -71,6 +71,10 @@ export class ResourceInventoryService {
     return removed;
   }
 
+  async keepSeen(awsAccountId: string, resourceType: string, seenAt: Date, regions?: readonly string[]): Promise<void> {
+    await this.repo.update({ awsAccountId, resourceType, ...(regions ? { region: In([...regions]) } : {}) }, { lastSeenAt: seenAt });
+  }
+
   async patchMetadata(awsAccountId: string, resourceType: string, resourceId: string, patch: AwsResourceMetadata): Promise<void> {
     await this.repo
       .createQueryBuilder()
@@ -179,7 +183,7 @@ export class ResourceInventoryService {
     const resource = await this.get(organizationId, id);
     resource.environment = environment;
     const analysis = resource.metadata.analysis;
-    if (analysis && (isEc2Analysis(analysis) || analysis.kind === 'RDS')) {
+    if (analysis && (isEc2Analysis(analysis) || analysis.kind === 'RDS' || analysis.kind === 'AURORA')) {
       resource.metadata = { ...resource.metadata, analysis: { ...analysis, environment: detectEnvironment(resource.name, resource.metadata.tags ?? {}, environment) } };
     }
     const saved = await this.repo.save(resource);

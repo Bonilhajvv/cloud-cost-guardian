@@ -1,5 +1,6 @@
-import { Body, Controller, Get, HttpCode, Ip, Post } from '@nestjs/common';
-import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, HttpCode, Ip, Post, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOkResponse, ApiTags, ApiTooManyRequestsResponse } from '@nestjs/swagger';
+import { ThrottlerGuard } from '@nestjs/throttler';
 import { CurrentUser, Public, SkipTenant } from '../common/decorators';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { AuthService } from './auth.service';
@@ -15,6 +16,8 @@ export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
   @Public()
+  @UseGuards(ThrottlerGuard)
+  @ApiTooManyRequestsResponse()
   @Post('register')
   @ApiOkResponse({ type: TokenResponseDto })
   register(@Body() dto: RegisterDto) {
@@ -22,6 +25,8 @@ export class AuthController {
   }
 
   @Public()
+  @UseGuards(ThrottlerGuard)
+  @ApiTooManyRequestsResponse()
   @Post('login')
   @HttpCode(200)
   @ApiOkResponse({ type: TokenResponseDto })
@@ -30,6 +35,8 @@ export class AuthController {
   }
 
   @Public()
+  @UseGuards(ThrottlerGuard)
+  @ApiTooManyRequestsResponse()
   @Post('refresh')
   @HttpCode(200)
   @ApiOkResponse({ type: TokenResponseDto })

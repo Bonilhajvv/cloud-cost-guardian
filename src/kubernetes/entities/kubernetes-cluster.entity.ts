@@ -9,7 +9,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { AwsAccount } from '../../aws-accounts/entities/aws-account.entity';
-import { KubernetesClusterStatus, KubernetesProvider } from '../../common/enums';
+import { KubernetesClusterStatus, KubernetesConnectionMode, KubernetesProvider } from '../../common/enums';
 import { Organization } from '../../organizations/entities/organization.entity';
 import { ManualEnvironment } from '../../aws/core/interfaces/environment.interface';
 
@@ -53,6 +53,21 @@ export class KubernetesCluster {
 
   @Column({ type: 'int', default: 1 })
   agentTokenVersion: number;
+
+  @Column({ type: 'uuid', nullable: true })
+  clusterUid: string | null;
+
+  @Column({ type: 'varchar', length: 16, default: KubernetesConnectionMode.AGENT })
+  connectionMode: KubernetesConnectionMode;
+
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  eksClusterName: string | null;
+
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  eksRegion: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  lastError: string | null;
 
   @Column({ type: 'varchar', length: 32, nullable: true })
   installMethod: string | null;

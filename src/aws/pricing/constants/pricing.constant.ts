@@ -19,6 +19,25 @@ export const RDS_PRICING_ENGINES: Record<string, string> = {
   mariadb: 'MariaDB',
 };
 
+export const AURORA_PRICING_ENGINES: Record<string, string> = {
+  'aurora-postgresql': 'Aurora PostgreSQL',
+  'aurora-mysql': 'Aurora MySQL',
+};
+
+export const RDS_STORAGE_USAGE: Record<string, { volumeType: string; usage: string }> = {
+  gp2: { volumeType: 'General Purpose', usage: 'GP2-Storage' },
+  gp3: { volumeType: 'General Purpose-GP3', usage: 'GP3-Storage' },
+  io1: { volumeType: 'Provisioned IOPS', usage: 'PIOPS-Storage' },
+  io2: { volumeType: 'Provisioned IOPS-IO2', usage: 'PIOPS-Storage-IO2' },
+  standard: { volumeType: 'Magnetic', usage: 'StorageUsage' },
+};
+
+export const RDS_IOPS_USAGE: Record<string, string> = { io1: 'PIOPS', io2: 'IO2-PIOPS' };
+
+export const S3_SERVICE = 'AmazonS3';
+
+export const LAMBDA_SERVICE = 'AWSLambda';
+
 export const EC2_SERVICE = 'AmazonEC2';
 
 export const RDS_SERVICE = 'AmazonRDS';

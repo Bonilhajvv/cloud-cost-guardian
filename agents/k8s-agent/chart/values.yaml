@@ -2,7 +2,7 @@ clusterId: ""
 clusterName: ""
 apiUrl: ""
 agentToken: ""
-image: ghcr.io/your-org/ccg-k8s-agent:0.3.0
+image: ghcr.io/bonilhajvv/ccg-k8s-agent:0.4.0
 intervalSeconds: 300
 resources:
   requests:

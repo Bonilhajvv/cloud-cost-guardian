@@ -6,18 +6,25 @@ import { KubernetesModule } from '../kubernetes/kubernetes.module';
 import { OrganizationsModule } from '../organizations/organizations.module';
 import { RecommendationsModule } from '../recommendations/recommendations.module';
 import { ResourceInventoryModule } from '../resource-inventory/resource-inventory.module';
+import { AuroraScanService } from './aurora-scan.service';
+import { LambdaScanService } from './lambda-scan.service';
+import { RdsBackupScanService } from './rds-backup-scan.service';
+import { RealizedSavingsService } from './realized-savings.service';
+import { S3ScanService } from './s3-scan.service';
+import { ServiceAnalysisRunner } from './service-analysis-runner.service';
 import { CommitmentSyncService } from './commitment-sync.service';
 import { Ec2ScheduleScanService } from './ec2-schedule-scan.service';
 import { KubernetesScanService } from './kubernetes-scan.service';
 import { NetworkScanService } from './network-scan.service';
 import { RdsScanService } from './rds-scan.service';
+import { SnapshotScanService } from './snapshot-scan.service';
 import { ScanOrchestratorService } from './scan-orchestrator.service';
 import { ScansController } from './scans.controller';
 
 @Module({
   imports: [AwsModule, AwsAccountsModule, ResourceInventoryModule, CostReportsModule, RecommendationsModule, KubernetesModule, OrganizationsModule],
   controllers: [ScansController],
-  providers: [ScanOrchestratorService, RdsScanService, CommitmentSyncService, NetworkScanService, KubernetesScanService, Ec2ScheduleScanService],
+  providers: [ScanOrchestratorService, RdsScanService, CommitmentSyncService, NetworkScanService, KubernetesScanService, Ec2ScheduleScanService, SnapshotScanService, ServiceAnalysisRunner, AuroraScanService, S3ScanService, LambdaScanService, RdsBackupScanService, RealizedSavingsService],
   exports: [ScanOrchestratorService],
 })
 export class ScansModule {}

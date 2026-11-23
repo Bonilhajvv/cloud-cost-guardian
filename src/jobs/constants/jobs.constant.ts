@@ -12,6 +12,7 @@ export const CRON = {
   resources: '0 */6 * * *',
   costs: '30 */6 * * *',
   optimizer: '0 3 * * *',
+  eksCollection: '*/5 * * * *',
   kubernetesStale: '*/5 * * * *',
   kubernetesPurge: '0 4 * * *',
 } as const;

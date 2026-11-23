@@ -5,8 +5,11 @@ import { RecommendationDraft, ResourceAnalysis } from '../aws/core/interfaces/re
 import { CloudWatchService } from '../aws/metrics/cloudwatch.service';
 import { ComputeOptimizerService } from '../aws/optimizer/compute-optimizer.service';
 import { PricingService } from '../aws/pricing/pricing.service';
+import { isAuroraEngine } from '../aws/rds/helpers/aurora.helper';
 import { extendedSupportYear, inExtendedSupport, lifecycleFor } from '../aws/rds/helpers/rds-lifecycle.helper';
-import { RdsEngineLifecycle } from '../aws/rds/interfaces/rds-instance.interface';
+import { DEFAULT_PARAMETER_GROUP_PREFIX } from '../aws/rds/constants/rds.constant';
+import { MaxConnectionsSetting } from '../aws/rds/interfaces/max-connections.interface';
+import { RdsEngineLifecycle, RdsInstance } from '../aws/rds/interfaces/rds-instance.interface';
 import { RdsAnalyzerService } from '../aws/rds/rds-analyzer.service';
 import { RdsService } from '../aws/rds/rds.service';
 import { AwsAccount } from '../aws-accounts/entities/aws-account.entity';
@@ -40,7 +43,7 @@ export class RdsScanService {
     return { databases: run.results.reduce((s, r) => s + r.value, 0), failures: run.failures };
   }
 
-  async syncOptimizer(account: AwsAccount): Promise<Omit<OptimizerSyncDetails, 'rds'>> {
+  async syncOptimizer(account: AwsAccount): Promise<Omit<OptimizerSyncDetails, 'rds' | 'lambda'>> {
     const resources = await this.inventory.findByType(account.id, RDS_DB_INSTANCE_RESOURCE_TYPE);
     const byRegion = groupByRegion(resources, (r) => r.region);
     const regions: Record<string, string> = {};
@@ -54,7 +57,10 @@ export class RdsScanService {
         const db = resource.metadata.rds;
         const prices = resource.metadata.rdsPrices;
         if (rec && db && prices) {
-          const options = await this.pricing.getRdsInstancePrices(region, db.engine, prices.deployment, rec.options.map((o) => o.instanceClass));
+          const classes = rec.options.map((o) => o.instanceClass);
+          const options = isAuroraEngine(db.engine)
+            ? await this.pricing.getAuroraInstancePrices(region, db.engine, prices.auroraIoOptimized ?? false, classes)
+            : await this.pricing.getRdsInstancePrices(region, db.engine, prices.deployment, classes);
           prices.byClass = { ...prices.byClass, ...options };
         }
         await this.inventory.patchMetadata(account.id, resource.resourceType, resource.resourceId, { rdsOptimizer: rec, ...(prices ? { rdsPrices: prices } : {}) });
@@ -79,6 +85,7 @@ export class RdsScanService {
         optimizer: m.rdsOptimizer ?? null,
         prices: m.rdsPrices ?? null,
         lifecycle: m.rdsLifecycle ?? null,
+        maxConnections: m.rdsMaxConnections,
         extendedSupportHourlyPerVcpu: m.rdsExtendedSupportHourlyPerVcpu ?? null,
         environmentOverride: resource.environment,
         currency: DEFAULT_CURRENCY,
@@ -108,6 +115,7 @@ export class RdsScanService {
     await this.inventory.upsertDiscovered(account, databases.map(rdsToResourceData), seenAt);
     const metrics = await this.cloudWatch.getRdsUtilization(account, region, databases.map((d) => d.dbInstanceId), METRICS_PERIOD_DAYS);
     const lifecycles = await this.lifecycles(account, region, databases.map((d) => d.engine));
+    const maxConnections = await this.maxConnections(account, region, databases);
     const now = new Date();
     const ipv4Hourly = (await this.pricing.getNetworkPrices(region)).publicIpv4Hourly;
     const publicIpv4Monthly = ipv4Hourly === null ? null : round(ipv4Hourly * HOURS_PER_MONTH);
@@ -116,6 +124,9 @@ export class RdsScanService {
       const deployment = db.multiAz ? 'Multi-AZ' : 'Single-AZ';
       const byClass = await this.pricing.getRdsInstancePrices(region, db.engine, deployment, [db.instanceClass]);
       const singleAz = db.multiAz ? ((await this.pricing.getRdsInstancePrices(region, db.engine, 'Single-AZ', [db.instanceClass]))[db.instanceClass] ?? null) : null;
+      const storageTypes = isAuroraEngine(db.engine) || !db.storageType ? [] : [db.storageType, 'gp3'];
+      const storage = storageTypes.length ? await this.pricing.getRdsStoragePrices(region, deployment, storageTypes) : null;
+      const singleAzStorage = storageTypes.length && db.multiAz ? await this.pricing.getRdsStoragePrices(region, 'Single-AZ', storageTypes) : null;
       const extendedSupport =
         lifecycle && inExtendedSupport(lifecycle, now)
           ? await this.pricing.getRdsExtendedSupportHourlyPerVcpu(region, db.engine, lifecycle.majorVersion, extendedSupportYear(lifecycle, now))
@@ -124,13 +135,35 @@ export class RdsScanService {
         rds: db,
         tags: db.tags,
         rdsMetrics: metrics.get(db.dbInstanceId) ?? null,
-        rdsPrices: { deployment, byClass, singleAz, publicIpv4Monthly },
+        rdsPrices: { deployment, byClass, singleAz, publicIpv4Monthly, storage, singleAzStorage },
         rdsLifecycle: lifecycle,
+        rdsMaxConnections: maxConnections.get(db.parameterGroup ?? '') ?? { source: 'UNREADABLE' },
         rdsExtendedSupportHourlyPerVcpu: extendedSupport,
       });
     }
     this.logger.log({ msg: 'RDS region enriched', awsAccountRef: account.id, region, databases: databases.length });
     return databases.length;
+  }
+
+  private async maxConnections(account: AwsAccount, region: string, databases: readonly RdsInstance[]): Promise<Map<string, MaxConnectionsSetting>> {
+    const out = new Map<string, MaxConnectionsSetting>();
+    for (const db of databases) {
+      const group = db.parameterGroup;
+      if (!group || out.has(group) || isAuroraEngine(db.engine)) continue;
+      if (group.startsWith(DEFAULT_PARAMETER_GROUP_PREFIX)) {
+        out.set(group, { source: 'DEFAULT' });
+        continue;
+      }
+      try {
+        const value = await this.rds.customMaxConnections(account, region, group);
+        out.set(group, value ? { source: 'PARAMETER_GROUP', value } : { source: 'DEFAULT' });
+      } catch (error) {
+        const err = toAwsIntegrationError(error);
+        this.logger.warn({ msg: 'RDS parameter group not readable: default max_connections assumed', awsAccountRef: account.id, region, code: err.code });
+        out.set(group, { source: 'UNREADABLE' });
+      }
+    }
+    return out;
   }
 
   private async lifecycles(account: AwsAccount, region: string, engines: string[]): Promise<RdsEngineLifecycle[]> {

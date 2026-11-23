@@ -42,6 +42,7 @@ function build() {
     },
     rds: {
       listInstances: jest.fn().mockResolvedValue([database]),
+      customMaxConnections: jest.fn().mockResolvedValue('500'),
       engineLifecycles: jest.fn().mockResolvedValue([{ engine: 'postgres', majorVersion: '13', standardSupportEnd: '2026-02-28T23:59:59.999Z', extendedSupportEnd: '2029-02-28T23:59:59.999Z' }]),
     },
     cloudWatch: {
@@ -71,6 +72,8 @@ function build() {
         Object.fromEntries(classes.map((c) => [c, { monthly: (deployment === 'Multi-AZ' ? 2 : 1) * (c === 'db.m6g.large' ? 109.5 : 94.9), vcpu: 2 }])),
       ),
       getRdsExtendedSupportHourlyPerVcpu: jest.fn().mockResolvedValue(0.1),
+      getRdsStoragePrices: jest.fn().mockResolvedValue({ gbMonth: { gp3: 0.115 }, iopsMonth: {} }),
+      getAuroraInstancePrices: jest.fn().mockResolvedValue({}),
       getNetworkPrices: jest.fn().mockResolvedValue({ publicIpv4Hourly: 0.005, natGatewayHourly: 0.045, natGatewayPerGb: 0.045, loadBalancerHourly: {} }),
     },
     recommendations: { syncDrafts: jest.fn().mockResolvedValue({ created: 3, updated: 0, resolved: 0, skipped: 0 }) },
@@ -119,6 +122,21 @@ describe('RdsScanService', () => {
 
     expect(await service.scan(account, ['us-east-1'], new Date())).toEqual({ databases: 0, failures: [] });
     expect(deps.inventory.upsertDiscovered).not.toHaveBeenCalled();
+  });
+
+  it('reads max_connections only from custom parameter groups and survives a denied read', async () => {
+    const { service, deps, store } = build();
+    const read = (parameterGroup: string) => {
+      deps.rds.listInstances.mockResolvedValue([{ ...database, parameterGroup }]);
+      return service.scan(account, ['us-east-1'], new Date()).then(() => store.get('legacy-hml')?.rdsMaxConnections);
+    };
+    expect(await read('default.postgres13')).toEqual({ source: 'DEFAULT' });
+    expect(deps.rds.customMaxConnections).not.toHaveBeenCalled();
+    expect(await read('custom')).toEqual({ source: 'PARAMETER_GROUP', value: '500' });
+    deps.rds.customMaxConnections.mockResolvedValueOnce(null);
+    expect(await read('custom')).toEqual({ source: 'DEFAULT' });
+    deps.rds.customMaxConnections.mockRejectedValueOnce(Object.assign(new Error('denied'), { name: 'AccessDenied' }));
+    expect(await read('custom')).toEqual({ source: 'UNREADABLE' });
   });
 
   it('keeps analyzing when the engine lifecycle API fails', async () => {

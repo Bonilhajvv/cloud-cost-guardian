@@ -1,4 +1,5 @@
 import { ResourceAnalysis } from '../../aws/core/interfaces/recommendation-draft.interface';
+import { RealizedMeasurement } from './realized-measurement.interface';
 import { OptionFit } from '../../aws/ec2/interfaces/usage-profile.interface';
 
 export type ResolutionReason =
@@ -30,7 +31,7 @@ export interface RecommendationResolution {
   change?: ResourceChange;
 }
 
-export type RealizedSource = 'ON_DEMAND_PRICE' | 'COST_EXPLORER_RESOURCE' | 'COMPUTE_OPTIMIZER' | 'RESOURCE_COST';
+export type RealizedSource = 'ON_DEMAND_PRICE' | 'COST_EXPLORER_RESOURCE' | 'COMPUTE_OPTIMIZER' | 'RESOURCE_COST' | 'MANUAL' | 'COST_AND_USAGE_REPORT';
 
 export interface ResolutionOutcome {
   implemented: boolean;
@@ -41,6 +42,7 @@ export interface RecommendationMetadata {
   analysis?: ResourceAnalysis;
   latestAnalysis?: ResourceAnalysis;
   realizedSource?: RealizedSource;
+  realizedMeasurement?: RealizedMeasurement;
   targetKey?: string | null;
   statusNote?: string;
   resolution?: RecommendationResolution;

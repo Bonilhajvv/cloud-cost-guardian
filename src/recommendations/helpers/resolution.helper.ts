@@ -1,4 +1,4 @@
-import { isEc2Analysis } from '../../aws/core/helpers/resource-analysis.helper';
+import { isEc2Analysis, isSizedAnalysis } from '../../aws/core/helpers/resource-analysis.helper';
 import { ResourceAnalysis } from '../../aws/core/interfaces/recommendation-draft.interface';
 import { OptionFit } from '../../aws/ec2/interfaces/usage-profile.interface';
 import { RecommendationType } from '../../common/enums';
@@ -13,26 +13,26 @@ import {
 } from '../interfaces/recommendation-metadata.interface';
 
 function configuredType(analysis: ResourceAnalysis): string {
-  if (analysis.kind === 'COMMITMENT' || analysis.kind === 'NETWORK' || analysis.kind === 'KUBERNETES') return analysis.resourceId;
+  if (!isSizedAnalysis(analysis)) return analysis.resourceId;
   if (analysis.kind === 'EBS') return analysis.current.volumeType;
   return analysis.kind === 'RDS' ? analysis.current.instanceClass : analysis.current.instanceType;
 }
 
 function recommendedType(analysis: ResourceAnalysis): string | null {
-  if (!analysis.recommendation || analysis.kind === 'COMMITMENT' || analysis.kind === 'NETWORK' || analysis.kind === 'KUBERNETES') return null;
+  if (!isSizedAnalysis(analysis) || !analysis.recommendation) return null;
   if (analysis.kind === 'EBS') return analysis.recommendation.targetVolumeType;
   return analysis.kind === 'RDS' ? analysis.recommendation.instanceClass : analysis.recommendation.instanceType;
 }
 
 function sizeOf(analysis: ResourceAnalysis): (number | null)[] {
-  if (analysis.kind === 'COMMITMENT' || analysis.kind === 'NETWORK' || analysis.kind === 'KUBERNETES') return [null];
+  if (!isSizedAnalysis(analysis)) return [null];
   if (analysis.kind === 'EBS') return [analysis.current.sizeGiB];
   return analysis.kind === 'RDS' ? [analysis.current.vcpu] : [analysis.current.vcpu, analysis.current.memoryGb];
 }
 
 function recommendedSizeOf(analysis: ResourceAnalysis): (number | null)[] | null {
   if (analysis.kind === 'EBS') return analysis.recommendation ? [analysis.current.sizeGiB] : null;
-  if (analysis.kind === 'RDS' || analysis.kind === 'COMMITMENT' || analysis.kind === 'NETWORK' || analysis.kind === 'KUBERNETES') return null;
+  if (!isEc2Analysis(analysis)) return null;
   return analysis.recommendation ? [analysis.recommendation.vcpu, analysis.recommendation.memoryGb] : null;
 }
 
@@ -103,6 +103,7 @@ export function resolutionFor(previous: ResourceAnalysis | undefined, current: R
 }
 
 function onDemandMonthly(analysis: ResourceAnalysis): number | null {
+  if (analysis.kind === 'RDS' && analysis.current.monthlyCost !== null) return round(analysis.current.monthlyCost - (analysis.current.storageMonthlyCost ?? 0));
   if (!isEc2Analysis(analysis)) return analysis.current.monthlyCost;
   const fromOption = analysis.options?.find((o) => o.kind === 'CURRENT')?.monthlyCost;
   if (fromOption !== undefined && fromOption !== null) return fromOption;

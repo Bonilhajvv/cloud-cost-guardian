@@ -65,7 +65,9 @@ Guards globais em `src/common/guards`: `JwtAuthGuard` → `RolesGuard` → `Tena
 4. `POST /aws-accounts/:id/test-connection` roda AssumeRole + GetCallerIdentity, valida o account id e avisa se a trust policy não exige ExternalId.
 5. `POST /aws-accounts/:id/scan` dispara o scan completo (202, assíncrono).
 
-A policy read-only inclui `rds:DescribeDBInstances`, `rds:DescribeDBMajorEngineVersions`, `compute-optimizer:GetRDSDatabaseRecommendations` `ec2:DescribeAddresses`, `ec2:DescribeNatGateways`, `ec2:DescribeVpcEndpoints`, `ec2:DescribeNetworkInterfaces`, `elasticloadbalancing:DescribeLoadBalancers` e as leituras de compromissos do Cost Explorer (`ce:GetSavingsPlansPurchaseRecommendation`, `ce:GetSavingsPlansCoverage`, `ce:GetSavingsPlansUtilization`, `ce:GetReservationPurchaseRecommendation`, `ce:GetReservationUtilization`). Contas conectadas antes desses módulos precisam atualizar a stack. Até lá, o scan registra um aviso e segue sem esses dados, sem falhar.
+Para o CUR 2.0, Aurora, S3, Lambda e EKS sem agente, a policy também inclui `rds:DescribeDBClusters`, `rds:DescribeDBParameters`, `s3:ListAllMyBuckets`, `s3:GetBucketLocation`, `s3:GetLifecycleConfiguration`, `s3:GetBucketVersioning`, `s3:ListBucketMultipartUploads`, `lambda:ListFunctions`, `lambda:ListProvisionedConcurrencyConfigs`, `compute-optimizer:GetLambdaFunctionRecommendations` e `eks:DescribeCluster`. `s3:GetObject` e `s3:ListBucket` valem só para o bucket do export de custo (`ccg-cur-<conta>`): a plataforma não lê objetos de outros buckets.
+
+A policy read-only inclui `rds:DescribeDBInstances`, `rds:DescribeDBMajorEngineVersions`, `compute-optimizer:GetRDSDatabaseRecommendations` `ec2:DescribeAddresses`, `ec2:DescribeNatGateways`, `ec2:DescribeVpcEndpoints`, `ec2:DescribeNetworkInterfaces`, `elasticloadbalancing:DescribeLoadBalancers`, `ec2:DescribeSnapshots`, `ec2:DescribeImages`, `rds:DescribeDBSnapshots` e as leituras de compromissos do Cost Explorer (`ce:GetSavingsPlansPurchaseRecommendation`, `ce:GetSavingsPlansCoverage`, `ce:GetSavingsPlansUtilization`, `ce:GetReservationPurchaseRecommendation`, `ce:GetReservationUtilization`). Contas conectadas antes desses módulos precisam atualizar a stack. Até lá, o scan registra um aviso e segue sem esses dados, sem falhar.
 
 A identidade da plataforma vem da default credential chain (IRSA/Pod Identity no EKS) e precisa de `sts:AssumeRole` e `pricing:GetProducts`. O cliente não precisa de permissão de Pricing. As credenciais temporárias ficam só em memória, com refresh 5 min antes de expirar e deduplicação de AssumeRole concorrente. `AwsClientFactory.createClient(EC2Client, account, region)` funciona para qualquer client v3, com retry `adaptive` para throttling. Falha numa região não aborta as demais.
 
@@ -80,6 +82,20 @@ curl -s http://localhost:3000/api/v1/public/cloudformation/readonly-role.json > 
 aws s3 cp readonly-role.json s3://SEU-BUCKET-PUBLICO/cloudformation/readonly-role.json --acl public-read
 ```
 
+## Economia medida (CUR 2.0)
+
+A stack cria um bucket privado `ccg-cur-<conta>` e um export CUR 2.0 diário por recurso, em CSV gzip. O bucket e o export só são criados em `us-east-1` e com `EnableCostExport=true` (padrão). O bucket fica retido se a stack for apagada: para recriar a stack, apague o bucket antes ou use `EnableCostExport=false`. Crie o export no onboarding, porque o histórico começa na criação dele.
+
+- A etapa `COSTS` lê o manifesto, recarrega só os meses que mudaram e grava em `cost_usage_daily` (180 dias). Só entram linhas da própria conta, mesmo no export da conta pagadora. O estado fica em `aws_accounts.costExport` (`OK`, `NOT_CONFIGURED`, `WAITING_FIRST_DELIVERY`, `ERROR`).
+- O custo é amortizado (Savings Plans e RI rateados). Imposto, crédito e reembolso ficam fora.
+- Cada recomendação `IMPLEMENTED` compara até 30 dias antes e depois, ignora o dia da mudança, a véspera e os 2 últimos dias (fatura ainda não fechada), e exige 7 dias de cada lado.
+  - `EC2_RIGHTSIZING` e `RDS_RIGHTSIZING`: compara o custo por hora, para queda de uso não virar economia.
+  - Remoções, `EC2_SCHEDULE`, EBS, Multi-AZ, Extended Support e storage do RDS: compara o custo total diário do recurso.
+  - Savings Plans e RI: compara o benefício líquido da conta (on-demand coberto menos custo amortizado e compromisso ocioso).
+- O resultado fica em `metadata.realizedMeasurement` (`MEASURED`, `PENDING`, `NOT_MEASURABLE` com o motivo). Se medido, substitui a estimativa e `realizedSource` vira `COST_AND_USAGE_REPORT`. Um valor informado pelo usuário nunca é substituído. A medida pode ser negativa.
+- Duas mudanças no mesmo recurso não contam a mesma economia: as janelas são recortadas, e mudanças no mesmo dia não são medidas.
+- `GET /dashboard/summary` traz `savings.realizedMeasuredMonthly`, a parte medida de `realizedMonthly`.
+
 ## Kubernetes
 
 Um agente read-only roda no cluster do cliente e só faz HTTPS de saída. Funciona em EKS, self-managed (kubeadm/k3s), GKE e AKS.
@@ -91,6 +107,7 @@ GET  /kubernetes-clusters/:id           →  status CONNECTED, nós, pods, vers�
 ```
 
 - **Tokens:** o link de instalação é de uso único e expira em 24h; morre na primeira conexão. O token do agente é um HMAC (`AGENT_TOKEN_SECRET`) ligado ao cluster e a uma versão. `DELETE /kubernetes-clusters/:id` revoga o token na hora; `POST /:id/install` gera um link novo.
+- **Um token, um cluster:** a partir da 0.4.0, o agente envia o UID do namespace `kube-system` como `clusterUid`. A API grava o primeiro UID e recusa com `409` relatórios de outro cluster (manifesto copiado entre hml e prd), sem gravar nada. `POST /:id/install` zera o vínculo para reinstalar num cluster recriado. Não protege contra token vazado: para isso, revogue.
 - **RBAC:** só `get`, `list` e `watch` em nodes, pods, workloads, HPA e `metrics.k8s.io`, mais `get` em `nodes/stats`. Não lê secrets nem configmaps, e só repassa labels de topologia e instância.
 - **Containers:** a partir da 0.3.0, o agente envia por workload cada container com request, limit e o maior uso entre os pods. Isso permite recomendar request por container.
 - **Disco do nó:** a partir da 0.2.0, o agente lê o uso do filesystem de cada nó no kubelet (`https://<IP do nó>:10250/stats/summary`, permissão `nodes/stats`, certificado do kubelet não verificado, como no metrics-server com `--kubelet-insecure-tls`). Esse dado alimenta a recomendação de aumentar disco quando a EC2 não tem CloudWatch Agent. Uma NetworkPolicy que bloqueie a porta 10250 desliga só essa leitura.
@@ -98,12 +115,20 @@ GET  /kubernetes-clusters/:id           →  status CONNECTED, nós, pods, vers�
 - **Descoberta:** `GET /kubernetes-clusters/suggestions` lista clusters detectados nas EC2 que ainda não foram conectados.
 - **Saúde:** um cluster sem relatório por 15 min vira `STALE` (job a cada 5 min). Amostras com mais de 30 dias (por nó e o pico diário por workload) são apagadas diariamente.
 
+### EKS sem agente
+
+Para clientes que não aceitam o pod. O agente continua sendo o padrão. `POST /kubernetes-clusters/eks { name, awsAccountId, eksClusterName, eksRegion }` devolve o comando do access entry e o RBAC; depois, `POST /kubernetes-clusters/:id/test-connection` lê o cluster. O worker coleta a cada 5 min pela API do EKS, com a mesma role IAM e token de 60 s. O erro da última coleta fica em `lastError`.
+
+`AmazonEKSViewPolicy` não lê `nodes` nem `metrics.k8s.io`, e `AmazonEKSAdminViewPolicy` lê Secrets. Por isso o access entry usa o grupo `ccg-readonly`, ligado a um ClusterRole próprio sem Secrets, ConfigMaps e acesso ao kubelet.
+
+Limites: exige endpoint público e autenticação `API` ou `API_AND_CONFIG_MAP`; não coleta disco do nó; o spec dos pods, com variáveis de ambiente em texto puro, passa pela memória da plataforma (não é gravado). `DELETE` revoga; `test-connection` reativa.
+
 Código do agente em `agents/k8s-agent` (Go, só biblioteca padrão, imagem distroless de cerca de 11 MB) e Helm chart em `agents/k8s-agent/chart`.
 
 ```bash
 cd agents/k8s-agent && go test ./...
-docker build -t ghcr.io/your-org/ccg-k8s-agent:0.3.0 agents/k8s-agent
-helm package agents/k8s-agent/chart && helm push ccg-k8s-agent-0.3.0.tgz oci://ghcr.io/your-org/charts
+docker build -t ghcr.io/bonilhajvv/ccg-k8s-agent:0.4.0 agents/k8s-agent
+helm package agents/k8s-agent/chart && helm push ccg-k8s-agent-0.4.0.tgz oci://ghcr.io/bonilhajvv/charts
 ```
 
 Para rodar localmente contra qualquer cluster, sem imagem: `kubectl proxy --port 8001`, depois `K8S_API_URL=http://127.0.0.1:8001 CCG_API_URL=... CCG_AGENT_TOKEN=... go run .`. Nesse modo, o disco do nó é lido pelo proxy do API server com a sua credencial, porque a máquina local não alcança a porta do kubelet.
@@ -150,11 +175,34 @@ Cada EC2 recebe `metadata.analysis.environment`: `PRODUCTION`, `NON_PRODUCTION` 
 
 - `RDS_IDLE`: zero conexões em 14 dias (mínimo de 7 dias de dados) ou ocioso pelo Compute Optimizer. Nunca para banco com réplica. Recomenda snapshot final antes de apagar.
 - `RDS_RIGHTSIZING` / `RDS_UPSIZE`: só pelo Compute Optimizer. Não há heurística própria de CPU, porque o banco usa a RAM livre como cache e diminuir a classe é arriscado. Downsize sai com risco mínimo `MEDIUM`; upsize mostra o aumento de custo.
+- Trava de conexões no `RDS_RIGHTSIZING`: compara o pico de conexões com o `max_connections` da classe menor (fórmula do parameter group ou padrão da engine). Acima de 80% (60% nas classes de até 2 GiB), a classe é descartada, tenta a próxima opção e a análise registra o motivo; acima de 60%, o risco vira `HIGH`. Valor fixo no parameter group não bloqueia, só avisa. Sem `rds:DescribeDBParameters`, assume o padrão e avisa. No Aurora PostgreSQL o padrão é sempre assumido (o valor fica no cluster parameter group, que não é lido); Aurora MySQL só recebe o aviso. A fórmula usa a RAM total e a AWS desconta o que reserva, então o limite real é menor, sobretudo nas classes pequenas.
 - `RDS_MULTI_AZ`: banco Multi-AZ fora de produção, detectado pela tag `Environment`/`env`/`stage`/`ambiente` (confiança alta) ou pelo nome (`-hml`, `-dev`, `-qa`...). A economia é a diferença entre os preços Multi-AZ e Single-AZ.
 - `RDS_EXTENDED_SUPPORT`: versão maior da engine fora do suporte padrão (`DescribeDBMajorEngineVersions`). A economia é o custo do Extended Support: vCPU × preço por vCPU-hora × 730, em dobro no Multi-AZ. 180 dias antes do fim do suporte, a análise ganha um aviso.
 - Storage `gp2` → `gp3` não é recomendado no RDS: o preço por GB é o mesmo.
 - `RDS_PUBLIC_ACCESS`: banco com `PubliclyAccessible`. Risco de segurança e custo do IPv4 público; recomenda deixar privado e acessar por dentro da VPC, VPN ou túnel SSM.
-- Aurora e bancos fora do status `available` ainda não são analisados.
+- O custo inclui o storage (GB e IOPS de io1/io2). IOPS de gp3 acima do incluído não entra.
+- `RDS_STORAGE_TYPE`: io1/io2 cujo pico de 14 dias, com 20% de folga, cabe no gp3 (3.000 IOPS e 125 MB/s, ou 12.000 e 500 a partir de 400 GB). O pico soma os máximos de leitura e escrita, então é conservador.
+- `RDS_STORAGE_SHRINK`: uso máximo com 30% de folga cabe em 60% do alocado. Risco `HIGH`: o RDS não encolhe no lugar (Blue/Green ou dump e restore). Não sai para réplica nem quando o pico precisa do gp3 de 400 GB.
+- `RDS_BACKUP_EXCESS`: por região, o custo real de backup acima da franquia (Cost Explorer, 30 dias, a partir de USD 5) quando há retenção acima de 7 dias ou snapshots manuais antigos. Economia `null`, com o teto na descrição.
+- Membros de Multi-AZ DB cluster e bancos fora do status `available` não são analisados.
+
+## Regras do analyzer Aurora
+
+- Instâncias: rightsizing (Compute Optimizer), Extended Support e acesso público, como no RDS.
+- `AURORA_CLUSTER_IDLE` e `AURORA_READER_IDLE`: sem conexões em 14 dias (mínimo de 7 dias de dados). O único reader sai com risco `HIGH`, porque é o alvo de failover.
+- `AURORA_STORAGE_MODE`: compara Standard e I/O-Optimized (instâncias, storage e I/O). Exige USD 10 e 10% de economia, e todos os preços e métricas.
+- `AURORA_SERVERLESS_MIN_CAPACITY`: 90% das horas no mínimo de ACU. Economia `null`, com o teto na descrição.
+
+## Regras do analyzer S3
+
+`S3_LIFECYCLE`, uma por bucket: 100 GB ou mais em Standard sem transição nem expiração; versionamento sem regra para versões antigas (10 GB ou mais); uploads multipart parados há mais de 7 dias sem regra de aborto. Economia `null`: o padrão de acesso é desconhecido. O custo vem do CUR quando há 7 dias de dados; senão, do storage Standard na primeira faixa de preço.
+
+## Regras do analyzer Lambda
+
+- `LAMBDA_RIGHTSIZING`: memória, só pelo Compute Optimizer.
+- `LAMBDA_ARM64`: função x86_64 em Zip com runtime gerenciado e economia de USD 1 ou mais.
+- `LAMBDA_PROVISIONED_CONCURRENCY`: pico de uso abaixo de 50%; o alvo tem 20% de folga.
+- O custo usa duração e concorrência provisionada on-demand, sem requisições, nível gratuito e Savings Plans.
 
 ## Regras do analyzer de rede
 
@@ -167,6 +215,14 @@ Desde 2024, a AWS cobra cada IPv4 público (USD 0,005/h, cerca de USD 3,65/mês)
 - Instâncias com IPv4 público não viram recomendação: tirar o IP exigiria um NAT, que custa mais que alguns IPs.
 
 `GET /dashboard/summary` traz `publicIpv4`: quantidade de IPv4 públicos por tipo de dono (`EC2`, `LOAD_BALANCER`, `RDS`, `NAT_GATEWAY`, `OTHER`, `UNATTACHED`) e o custo mensal. Load balancers Classic e Gateway ainda não são analisados.
+
+## Regras do analyzer de snapshots
+
+- `EBS_SNAPSHOT_OLD`: snapshot EBS próprio (`completed`) com 90 dias ou mais. Ficam de fora os snapshots usados por uma AMI da conta (`IN_USE`), os gerenciados por AWS Backup ou DLM (`MANAGED`) e os mais novos (`RECENT`). Se a role não lê `DescribeImages`, nenhum snapshot EBS é analisado, para nunca sugerir apagar o snapshot de uma AMI.
+- A economia só é calculada quando o snapshot é o único do volume: o tamanho cheio (`FullSnapshotSizeInBytes`) vezes o preço de `EBS:SnapshotUsage`. Com outros snapshots do mesmo volume, os blocos podem ser compartilhados (snapshots são incrementais) e a economia fica `null`, com o teto na descrição. Snapshots copiados (`vol-ffffffff`) e os do tier archive também ficam `null`.
+- `RDS_SNAPSHOT_OLD`: snapshot RDS manual (`available`) com 90 dias ou mais. A economia fica `null`: o RDS cobra snapshots manuais como backup storage acima de uma franquia igual ao storage provisionado na região.
+- Confiança `HIGH` quando o volume ou banco de origem não existe mais; senão `MEDIUM`. Risco sempre `MEDIUM`, porque apagar não tem volta. A descrição pede para confirmar a política de retenção e sugere o tier archive para snapshots EBS que precisam ficar.
+- Se a role não tiver as permissões novas, o scan avisa e mantém os snapshots já conhecidos. Eles não são removidos como stale e as recomendações não viram "implementadas" por engano.
 
 ## Regras do analyzer Kubernetes
 
@@ -265,6 +321,7 @@ O worker é o primeiro candidato a virar microsserviço: mesma imagem, outro ent
 | Resource scan + análise | `0 */6 * * *` | 3h |
 | Cost sync + análise | `30 */6 * * *` | 3h |
 | Compute Optimizer + análise | `0 3 * * *` | 12h |
+| Coleta de EKS sem agente | `*/5 * * * *` | - |
 
 ## Endpoints principais
 
@@ -273,13 +330,13 @@ O worker é o primeiro candidato a virar microsserviço: mesma imagem, outro ent
 ## Limitações conhecidas da V1
 
 - Valores em USD (moeda do Cost Explorer). Ainda não há conversão para BRL.
-- `realizedMonthlySavings` hoje é informado manualmente via `PATCH status`; a medição automática pós-mudança fica para depois.
+- A medição pelo CUR não cobre Kubernetes, S3, Lambda, Aurora (exceto remoções) nem recomendações que aumentam o custo. Marcar `IMPLEMENTED` dias depois da mudança dilui o resultado.
+- O benefício de Savings Plan e RI é da conta inteira: outra compra na mesma janela entra na conta.
 - Sem resource-level data no Cost Explorer nem Compute Optimizer, o custo vem do preço on-demand, que ignora RI e Savings Plans. Se a Pricing API não responder, a economia fica `null` (nunca inventada).
 - Memória só existe com CloudWatch Agent (`mem_used_percent`, Linux), Container Insights ou o agente Kubernetes. Sem eles: `Memory metrics unavailable` e risco elevado quando a RAM diminui.
-- Sem rate limit no login ainda (sugestão: `@nestjs/throttler`).
-- RDS não cobre Aurora, storage nem backup no custo. S3 e Lambda ficam para as próximas fases.
+- Rate limit de `/auth/login`, `/auth/register` e `/auth/refresh`: 10 por minuto por IP, em memória. Com várias réplicas da API, o limite vale por pod. Com `trust proxy` ligado, o IP vem do `X-Forwarded-For`, então o ingress precisa sobrescrever esse header.
+- Aplicar mudanças de S3, Lambda, modo Aurora ou storage do RDS não é detectado como "implementado": a recomendação só deixa de aparecer no scan seguinte.
 - Compromissos usam o escopo padrão do Cost Explorer (conta pagadora). Em contas membro de uma AWS Organization, a recomendação pode considerar outras contas. Compras de Savings Plans e RI não são detectadas como "implementadas": a recomendação deixa de aparecer quando a AWS para de recomendá-la.
 - Aumentar disco, desligar Multi-AZ e atualizar a engine não são detectados como "implementados": a recomendação só deixa de aparecer no scan seguinte, sem registrar a economia realizada.
 - Kubernetes: a consolidação de nós usa os requests atuais, sem simular os requests reduzidos pelas recomendações de workload. Clusters sem `awsAccountId` não são analisados. Ajustes de request e nós removidos não são detectados como "implementados": a recomendação só deixa de aparecer no scan seguinte.
 - Ambiente e expediente: `EC2_SCHEDULE` não verifica se a instância trabalha à noite ou no fim de semana (a descrição pede para o usuário confirmar) e calcula a economia sobre o custo atual, que pode já ter desconto de RI ou Savings Plan. As recomendações de expediente do Kubernetes não são detectadas como "implementadas": a agenda fica fora do que o agente lê.
-- Modo EKS sem agente (access entry + IAM) ainda não existe.

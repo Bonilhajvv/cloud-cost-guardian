@@ -9,6 +9,19 @@ export function parseOnDemandHourlyUsd(priceItem: string): number | null {
 }
 
 export function parseOnDemandUsd(priceItem: string, unit: string): number | null {
+  return parsePrice(priceItem, unit, () => true);
+}
+
+export function parseFirstTierUsd(priceItem: string, unit: string): number | null {
+  return parsePrice(priceItem, unit, (dimension) => dimension.beginRange === '0');
+}
+
+export function usageTypeMatches(priceItem: string, usage: string): boolean {
+  const type = parseProductAttribute(priceItem, 'usagetype');
+  return type === usage || (!!type && type.endsWith(`-${usage}`) && /^[A-Z]+\d*$/.test(type.slice(0, -usage.length - 1)));
+}
+
+function parsePrice(priceItem: string, unit: string, accepts: (dimension: Record<string, unknown>) => boolean): number | null {
   let doc: unknown;
   try {
     doc = JSON.parse(priceItem);
@@ -22,7 +35,7 @@ export function parseOnDemandUsd(priceItem: string, unit: string): number | null
     if (!dimensions) continue;
     for (const dimension of Object.values(dimensions)) {
       const d = asRecord(dimension);
-      if (d?.unit !== unit) continue;
+      if (d?.unit !== unit || !accepts(d)) continue;
       const usd = Number(asRecord(d.pricePerUnit)?.USD);
       if (Number.isFinite(usd) && usd > 0) return usd;
     }
@@ -41,4 +54,10 @@ export function parseProductAttribute(priceItem: string, attribute: string): str
   } catch {
     return null;
   }
+}
+
+export function parseMemoryGb(priceItem: string): number | null {
+  const match = /^([\d,.]+) GiB$/.exec(parseProductAttribute(priceItem, 'memory') ?? '');
+  const value = match ? Number(match[1].replaceAll(',', '')) : 0;
+  return Number.isFinite(value) && value > 0 ? value : null;
 }

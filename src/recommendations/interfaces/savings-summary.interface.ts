@@ -5,6 +5,7 @@ export interface SavingsSummary {
   acceptedMonthly: number;
   implementedMonthly: number;
   realizedMonthly: number;
+  realizedMeasuredMonthly: number;
   openRecommendations: number;
 }
 

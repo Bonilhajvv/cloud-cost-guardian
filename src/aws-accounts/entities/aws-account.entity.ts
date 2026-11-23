@@ -1,4 +1,6 @@
 import { CommitmentSnapshot } from '../../aws/costs/interfaces/commitment.interface';
+import { CostExportState } from '../../aws/data-exports/interfaces/data-export.interface';
+import { RdsBackupSnapshot } from '../../aws/rds/interfaces/rds-backup.interface';
 import { NetworkSnapshot } from '../../aws/network/interfaces/network.interface';
 import {
   Column,
@@ -69,6 +71,12 @@ export class AwsAccount {
 
   @Column({ type: 'jsonb', nullable: true })
   network: NetworkSnapshot | null;
+
+  @Column({ type: 'jsonb', nullable: true })
+  costExport: CostExportState | null;
+
+  @Column({ type: 'jsonb', nullable: true })
+  rdsBackup: RdsBackupSnapshot | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
