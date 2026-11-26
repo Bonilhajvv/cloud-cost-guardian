@@ -11,6 +11,9 @@ import { AgentReportDto, ReportNodeDto } from './dto/agent-report.dto';
 import { KubernetesCluster } from './entities/kubernetes-cluster.entity';
 import { KubernetesContainerUsageDaily } from './entities/kubernetes-container-usage-daily.entity';
 import { KubernetesNode } from './entities/kubernetes-node.entity';
+import { KubernetesRouteHopUsageHourly } from './entities/kubernetes-route-hop-usage-hourly.entity';
+import { KubernetesRouteUsageHourly } from './entities/kubernetes-route-usage-hourly.entity';
+import { requestUsageRows } from './helpers/request-cost.helper';
 import { KubernetesUsageSample } from './entities/kubernetes-usage-sample.entity';
 import { KubernetesWorkload } from './entities/kubernetes-workload.entity';
 import { KubernetesWorkloadUsageDaily } from './entities/kubernetes-workload-usage-daily.entity';
@@ -64,6 +67,7 @@ export class KubernetesIngestService {
       await manager.delete(KubernetesWorkload, { clusterId: cluster.id, lastSeenAt: LessThan(seenAt) });
       await this.insertSamples(manager, agent, report.nodes, instanceIds, seenAt);
       await this.upsertWorkloadUsage(manager, agent, report, seenAt);
+      await this.upsertRequestUsage(manager, agent, report);
     });
 
     const linkedInstances = await this.linkInstances(agent, cluster.name, report.nodes, instanceIds);
@@ -86,6 +90,8 @@ export class KubernetesIngestService {
       pods: podCount,
       linkedInstances,
       metricsServer: report.metricsServerAvailable,
+      routes: report.requests?.routes.length ?? 0,
+      droppedTraces: report.requests?.droppedTraces ?? 0,
     });
     return { accepted: true, nodes: report.nodes.length, workloads: report.workloads.length, linkedInstances };
   }
@@ -250,6 +256,36 @@ export class KubernetesIngestService {
         .values(batch)
         .onConflict(
           `("clusterId", "namespace", "kind", "name", "container", "day") DO UPDATE SET "maxCpuCores" = GREATEST(${containerTable}."maxCpuCores", EXCLUDED."maxCpuCores"), "maxMemoryBytes" = GREATEST(${containerTable}."maxMemoryBytes", EXCLUDED."maxMemoryBytes"), "samples" = ${containerTable}."samples" + 1`,
+        )
+        .execute();
+    }
+  }
+
+  private async upsertRequestUsage(manager: EntityManager, agent: AgentPrincipal, report: AgentReportDto): Promise<void> {
+    if (!report.requests) return;
+    const { routes, hops } = requestUsageRows(report.requests);
+    const owner = { organizationId: agent.organizationId, clusterId: agent.clusterId };
+    const routeTable = 'kubernetes_route_usage_hourly';
+    for (const batch of chunk(routes, INGEST_BATCH_SIZE)) {
+      await manager
+        .createQueryBuilder()
+        .insert()
+        .into(KubernetesRouteUsageHourly)
+        .values(batch.map((r) => ({ ...owner, ...r })))
+        .onConflict(
+          `("clusterId", "hour", "entryService", "entryRoute") DO UPDATE SET "requests" = ${routeTable}."requests" + EXCLUDED."requests", "durationMs" = ${routeTable}."durationMs" + EXCLUDED."durationMs"`,
+        )
+        .execute();
+    }
+    const hopTable = 'kubernetes_route_hop_usage_hourly';
+    for (const batch of chunk(hops, INGEST_BATCH_SIZE)) {
+      await manager
+        .createQueryBuilder()
+        .insert()
+        .into(KubernetesRouteHopUsageHourly)
+        .values(batch.map((h) => ({ ...owner, ...h })))
+        .onConflict(
+          `("clusterId", "hour", "entryService", "entryRoute", "hopKind", "namespace", "workloadKind", "workloadName", "service", "target") DO UPDATE SET "spans" = ${hopTable}."spans" + EXCLUDED."spans", "durationMs" = ${hopTable}."durationMs" + EXCLUDED."durationMs"`,
         )
         .execute();
     }

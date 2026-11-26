@@ -11,12 +11,14 @@ import {
   IsObject,
   IsOptional,
   IsUUID,
+  Max,
   IsString,
   MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
 import { MAX_REPORT_CONTAINERS, MAX_REPORT_NODES, MAX_REPORT_WORKLOADS } from '../constants/kubernetes.constant';
+import { HOP_KINDS, MAX_REPORT_ROUTES, MAX_ROUTE_HOPS } from '../constants/request-cost.constant';
 
 export class ResourceAmountDto {
   @IsOptional()
@@ -173,6 +175,91 @@ export class ReportWorkloadDto {
   containers?: ReportContainerDto[];
 }
 
+export class RequestHopDto {
+  @IsIn(HOP_KINDS)
+  kind: (typeof HOP_KINDS)[number];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(253)
+  namespace?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  workloadKind?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(253)
+  workloadName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(253)
+  service?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(253)
+  target?: string;
+
+  @IsInt()
+  @Min(0)
+  spans: number;
+
+  @IsNumber()
+  @Min(0)
+  durationMs: number;
+}
+
+export class RequestRouteDto {
+  @IsString()
+  @MaxLength(253)
+  entryService: string;
+
+  @IsString()
+  @MaxLength(253)
+  entryRoute: string;
+
+  @IsInt()
+  @Min(0)
+  requests: number;
+
+  @IsNumber()
+  @Min(0)
+  durationMs: number;
+
+  @IsArray()
+  @ArrayMaxSize(MAX_ROUTE_HOPS)
+  @ValidateNested({ each: true })
+  @Type(() => RequestHopDto)
+  hops: RequestHopDto[];
+}
+
+export class RequestUsageDto {
+  @IsDateString()
+  windowStart: string;
+
+  @IsDateString()
+  windowEnd: string;
+
+  @IsNumber()
+  @Min(0.0001)
+  @Max(1)
+  sampleRatio: number;
+
+  @IsInt()
+  @Min(0)
+  droppedTraces: number;
+
+  @IsArray()
+  @ArrayMaxSize(MAX_REPORT_ROUTES)
+  @ValidateNested({ each: true })
+  @Type(() => RequestRouteDto)
+  routes: RequestRouteDto[];
+}
+
 export class AgentReportDto {
   @IsString()
   @MaxLength(32)
@@ -206,4 +293,9 @@ export class AgentReportDto {
   @ValidateNested({ each: true })
   @Type(() => ReportWorkloadDto)
   workloads: ReportWorkloadDto[];
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => RequestUsageDto)
+  requests?: RequestUsageDto;
 }

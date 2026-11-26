@@ -90,7 +90,7 @@ export class EnvironmentVariables {
   AGENT_TOKEN_SECRET: string;
 
   @IsString()
-  K8S_AGENT_IMAGE = 'ghcr.io/bonilhajvv/ccg-k8s-agent:0.4.0';
+  K8S_AGENT_IMAGE = 'ghcr.io/bonilhajvv/ccg-k8s-agent:0.5.0';
 
   @IsString()
   K8S_AGENT_HELM_CHART = 'oci://ghcr.io/bonilhajvv/charts/ccg-k8s-agent';

@@ -2,11 +2,22 @@ clusterId: ""
 clusterName: ""
 apiUrl: ""
 agentToken: ""
-image: ghcr.io/bonilhajvv/ccg-k8s-agent:0.4.0
+image: ghcr.io/bonilhajvv/ccg-k8s-agent:0.5.0
 intervalSeconds: 300
 resources:
   requests:
     cpu: 20m
     memory: 32Mi
   limits:
-    memory: 128Mi
+    memory: 256Mi
+tracesSampleRatio: 1
+beyla:
+  enabled: false
+  image: grafana/beyla:2.1.0
+  excludeNamespaces: "^(kube-system|kube-public|kube-node-lease)$"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi

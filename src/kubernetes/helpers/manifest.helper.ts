@@ -111,6 +111,8 @@ spec:
           ports:
             - name: health
               containerPort: 8080
+            - name: otlp-http
+              containerPort: 4318
           livenessProbe:
             httpGet:
               path: /healthz
@@ -121,12 +123,27 @@ spec:
               cpu: 20m
               memory: 32Mi
             limits:
-              memory: 128Mi
+              memory: 256Mi
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ccg-agent
+  namespace: ${AGENT_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: ccg-agent
+spec:
+  selector:
+    app.kubernetes.io/name: ccg-agent
+  ports:
+    - name: otlp-http
+      port: 4318
+      targetPort: otlp-http
 `;
 }
 

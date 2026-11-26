@@ -60,6 +60,7 @@ type Report struct {
 	CollectedAt            string           `json:"collectedAt"`
 	Nodes                  []ReportNode     `json:"nodes"`
 	Workloads              []ReportWorkload `json:"workloads"`
+	Requests               *RequestUsage    `json:"requests,omitempty"`
 }
 
 type ownerRef struct {

@@ -11,6 +11,8 @@ import { EksConnectionsService } from './eks-connections.service';
 import { ListNamespacesDto } from './dto/list-namespaces.dto';
 import { SetClusterEnvironmentDto, SetNamespaceEnvironmentsDto } from './dto/set-cluster-environment.dto';
 import { KubernetesClustersService } from './kubernetes-clusters.service';
+import { RequestCostsQueryDto } from './dto/request-costs-query.dto';
+import { KubernetesRequestCostsService } from './kubernetes-request-costs.service';
 
 @ApiTags('Kubernetes')
 @ApiBearerAuth()
@@ -19,6 +21,7 @@ export class KubernetesClustersController {
   constructor(
     private readonly clusters: KubernetesClustersService,
     private readonly eksConnections: EksConnectionsService,
+    private readonly requestCosts: KubernetesRequestCostsService,
   ) {}
 
   @Post()
@@ -77,6 +80,12 @@ export class KubernetesClustersController {
   @Roles(...ORG_READ_ROLES)
   namespaces(@CurrentUser() user: TenantUser, @Param('id', ParseUUIDPipe) id: string, @Query() query: ListNamespacesDto) {
     return this.clusters.listNamespaces(user.organizationId, id, query);
+  }
+
+  @Get(':id/request-costs')
+  @Roles(...ORG_READ_ROLES)
+  requestCostReport(@CurrentUser() user: TenantUser, @Param('id', ParseUUIDPipe) id: string, @Query() query: RequestCostsQueryDto) {
+    return this.requestCosts.report(user.organizationId, id, query);
   }
 
   @Patch(':id/environment')

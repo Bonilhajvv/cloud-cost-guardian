@@ -38,9 +38,13 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.labels['ccg.io/install-method']
+            - name: CCG_TRACES_SAMPLE_RATIO
+              value: {{ .Values.tracesSampleRatio | quote }}
           ports:
             - name: health
               containerPort: 8080
+            - name: otlp-http
+              containerPort: 4318
           livenessProbe:
             httpGet:
               path: /healthz

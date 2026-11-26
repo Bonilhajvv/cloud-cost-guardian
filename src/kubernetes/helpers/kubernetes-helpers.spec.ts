@@ -53,7 +53,8 @@ describe('manifest rendering', () => {
     expect(yaml).toContain('ccg.io/install-method: kubectl');
     expect(yaml).toContain('image: "reg/ccg:1"');
     expect(yaml).not.toMatch(/secrets|configmaps|create|delete|patch|update/);
-    expect(yaml.split('\n---\n')).toHaveLength(6);
+    expect(yaml).toContain('containerPort: 4318');
+    expect(yaml.split('\n---\n')).toHaveLength(7);
   });
 
   it('renders helm values', () => {

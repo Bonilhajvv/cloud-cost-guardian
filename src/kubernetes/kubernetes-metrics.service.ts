@@ -7,6 +7,8 @@ import { round } from '../common/helpers/stats.helper';
 import { KubernetesCluster } from './entities/kubernetes-cluster.entity';
 import { KubernetesContainerUsageDaily } from './entities/kubernetes-container-usage-daily.entity';
 import { KubernetesNode } from './entities/kubernetes-node.entity';
+import { KubernetesRouteHopUsageHourly } from './entities/kubernetes-route-hop-usage-hourly.entity';
+import { KubernetesRouteUsageHourly } from './entities/kubernetes-route-usage-hourly.entity';
 import { KubernetesUsageSample } from './entities/kubernetes-usage-sample.entity';
 import { KubernetesWorkload } from './entities/kubernetes-workload.entity';
 import { KubernetesWorkloadUsageDaily } from './entities/kubernetes-workload-usage-daily.entity';
@@ -25,6 +27,8 @@ export class KubernetesMetricsService {
     @InjectRepository(KubernetesWorkload) private readonly workloads: Repository<KubernetesWorkload>,
     @InjectRepository(KubernetesWorkloadUsageDaily) private readonly workloadUsage: Repository<KubernetesWorkloadUsageDaily>,
     @InjectRepository(KubernetesContainerUsageDaily) private readonly containerUsage: Repository<KubernetesContainerUsageDaily>,
+    @InjectRepository(KubernetesRouteUsageHourly) private readonly routeUsage: Repository<KubernetesRouteUsageHourly>,
+    @InjectRepository(KubernetesRouteHopUsageHourly) private readonly routeHopUsage: Repository<KubernetesRouteHopUsageHourly>,
   ) {}
 
   async analysisData(organizationId: string, awsAccountId: string, days: number): Promise<ClusterAnalysisData[]> {
@@ -209,6 +213,8 @@ export class KubernetesMetricsService {
     const result = await this.samples.delete({ sampledAt: LessThan(cutoff) });
     const daily = await this.workloadUsage.delete({ day: LessThan(toIsoDate(cutoff)) });
     const containers = await this.containerUsage.delete({ day: LessThan(toIsoDate(cutoff)) });
-    return (result.affected ?? 0) + (daily.affected ?? 0) + (containers.affected ?? 0);
+    const routes = await this.routeUsage.delete({ hour: LessThan(cutoff) });
+    const hops = await this.routeHopUsage.delete({ hour: LessThan(cutoff) });
+    return [result, daily, containers, routes, hops].reduce((s, r) => s + (r.affected ?? 0), 0);
   }
 }

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const agentVersion = "0.4.0"
+const agentVersion = "0.5.0"
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
@@ -36,17 +36,30 @@ func main() {
 		os.Exit(1)
 	}
 	reporter := NewReporter(apiURL, token)
+	sampleRatio := 1.0
+	if v, err := strconv.ParseFloat(os.Getenv("CCG_TRACES_SAMPLE_RATIO"), 64); err == nil && v > 0 && v <= 1 {
+		sampleRatio = v
+	}
+	otlpAddr := os.Getenv("CCG_OTLP_ADDR")
+	if otlpAddr == "" {
+		otlpAddr = ":4318"
+	}
+	traces := NewTraceAggregator(time.Now)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	go serveHealth(ctx)
+	if otlpAddr != "off" {
+		go serveOTLP(ctx, otlpAddr, traces)
+		go traces.Run(ctx)
+	}
 	slog.Info("ccg-k8s-agent started", "version", agentVersion, "interval", interval.String(), "installMethod", installMethod, "clusterId", os.Getenv("CCG_CLUSTER_ID"))
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		runOnce(ctx, kube, reporter, installMethod)
+		runOnce(ctx, kube, reporter, traces, sampleRatio, installMethod)
 		select {
 		case <-ctx.Done():
 			slog.Info("ccg-k8s-agent stopping")
@@ -56,18 +69,19 @@ func main() {
 	}
 }
 
-func runOnce(ctx context.Context, kube *Kube, reporter *Reporter, installMethod string) {
+func runOnce(ctx context.Context, kube *Kube, reporter *Reporter, traces *TraceAggregator, sampleRatio float64, installMethod string) {
 	started := time.Now()
 	report, err := Collect(ctx, kube, installMethod)
 	if err != nil {
 		slog.Error("collect failed", "error", err.Error())
 		return
 	}
+	report.Requests = traces.Drain(sampleRatio)
 	if err := reporter.Send(ctx, report); err != nil {
 		slog.Error("report failed", "error", err.Error())
 		return
 	}
-	slog.Info("report sent", "nodes", len(report.Nodes), "workloads", len(report.Workloads), "metricsServer", report.MetricsServerAvailable, "durationMs", time.Since(started).Milliseconds())
+	slog.Info("report sent", "nodes", len(report.Nodes), "workloads", len(report.Workloads), "metricsServer", report.MetricsServerAvailable, "routes", routeCount(report.Requests), "durationMs", time.Since(started).Milliseconds())
 }
 
 func serveHealth(ctx context.Context) {
@@ -84,4 +98,11 @@ func serveHealth(ctx context.Context) {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		slog.Error("health server", "error", err.Error())
 	}
+}
+
+func routeCount(u *RequestUsage) int {
+	if u == nil {
+		return 0
+	}
+	return len(u.Routes)
 }
